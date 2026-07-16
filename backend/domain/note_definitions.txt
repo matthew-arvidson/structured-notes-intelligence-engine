@@ -1,0 +1,81 @@
+Equity Structured Notes Defined Detail — Aligned with UEQSN Schema
+Source: EQ Notes Defined Detail_V6.txt (structured-notes-final)
+
+───────────────────────────────────────────────────────────────────────────────
+CORE NOTE STRUCTURES
+───────────────────────────────────────────────────────────────────────────────
+
+Reverse Convertible (RCN)
+  Combines a high-yield bond with a short put option.
+  If the underlying breaches a downside barrier, redemption is in shares or
+  cash equivalent — potentially at a loss.
+  May include autocall and digital payout features.
+
+Phoenix Note
+  Pays periodic coupons if the underlying stays above a barrier (CouponStructure.Barrier).
+  May have a memory feature (CouponStructure.Memory, MemoryTriggerCondition).
+  Early redemption via autocall (CallLogic.AutocallTriggerLevel).
+
+AutoCallable Note
+  Automatically redeems if the underlying meets a trigger level on observation dates.
+  Often includes contingent coupons (CouponStructure.Contingent).
+
+Digital Note
+  Provides binary payout: fixed amount if underlying condition is met (CouponStructure.DigitalPayout).
+  Often applied at maturity.
+
+Range Accrual Note
+  Coupon accrues daily/periodically if the underlying remains within a defined range
+  (AccrualFields.RangeLower/Upper).
+  May include callable features and principal protection.
+
+Principal Protected Note (PPN)
+  Guarantees return of principal at maturity (RiskParameters.PrincipalProtectionPercentage = 1.00).
+  Upside may be linked to market performance with cap/floor.
+
+───────────────────────────────────────────────────────────────────────────────
+SCHEMA-ALIGNED TERMS & FEATURES
+───────────────────────────────────────────────────────────────────────────────
+
+Coupon Types
+  Fixed:          Regular interest payments regardless of underlying.
+  Contingent:     Paid only if performance condition is met.
+  Memory:         Missed payments accumulate if later condition is met.
+  DigitalPayout:  Binary-style fixed coupon.
+
+Barrier Logic
+  Level:              Trigger for knock-in/knock-out or coupon eligibility.
+  Threshold:          May define conversion trigger or loss condition.
+  ObservationStyle:   European (final only), American (continuous), Bermudan (discrete).
+  ObservationTiming:  Frequency of trigger monitoring (e.g., daily, final).
+  DigitalBarrierPayout: Fixed redemption if breached.
+
+Call Features
+  AutocallTriggerLevel:   If met, note redeems early.
+  TriggerType:            Fixed, Step-Up, or Observation-Based.
+  CallRedemptionAmount:   Paid to investor upon call.
+
+Redemption Mechanics
+  RedemptionAtBarrierBreach:  Equity delivery or loss if breached.
+  ParticipationMechanism:     Upside sharing (e.g., capped, uncapped).
+  DigitalRedemptionLogic:     Binary final payout logic.
+
+Accrual Mechanics
+  RangeLower/Upper:   Price range bounds.
+  AccrualBasis:       Daily, Monthly, etc.
+  RangePayoutFormula: How the coupon is calculated.
+
+Risk Parameters
+  PrincipalProtectionPercentage:  Usually 0 or 1.00.
+  EquityDeliveryRisk:             Describes risk from receiving shares.
+  MaxLossExposure:                Maximum downside exposure.
+
+Classification Fields
+  StructureTags:  Include structure type, coupon logic, risk logic.
+    Fields: Tag, ConfidenceTier, Rationale, DetectedFrom
+  OtherUnstructuredTerms: Captures novel/ambiguous features.
+    Fields: Label, Excerpt, Interpretation, MappedContext
+
+Weight: Decimal format (6-digit precision).
+  Represents the initial percentage weighting of an underlying index in a basket.
+  Unit: Percentage.

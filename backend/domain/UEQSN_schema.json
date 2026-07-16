@@ -1,0 +1,78 @@
+{
+  "Metadata": {
+    "SourceFileName": null,
+    "RecordCreationTimestamp": null
+  },
+  "structure_tags": [],
+  "IssuerDetails": {
+    "Issuer": null,
+    "Guarantor": null,
+    "TradeDate": null,
+    "SettlementDate": null,
+    "MaturityDate": null
+  },
+  "UnderlyingAssets": {
+    "Underlying": null,
+    "UnderlyingAsset": null,
+    "StartingValue": null
+  },
+  "CouponStructure": {
+    "CouponType": null,
+    "CouponRate": null,
+    "CouponFrequency": null,
+    "CouponBarrier": null,
+    "CouponMemory": null,
+    "CouponFormula": null,
+    "MaximumCoupon": null,
+    "MinimumCoupon": null
+  },
+  "CallLogic": {
+    "CallType": null,
+    "CallSchedule": [],
+    "CallLevel": null,
+    "CallPremium": null,
+    "CallAmount": null,
+    "CallPayoutStructure": null,
+    "CallSettlementLag": null
+  },
+  "BarrierLogic": {
+    "BarrierType": null,
+    "BarrierLevel": null,
+    "ThresholdValue": null,
+    "BarrierCondition": null,
+    "KnockInType": null,
+    "KnockOutType": null
+  },
+  "RedemptionTerms": {
+    "FinalRedemptionLogic": null,
+    "DownsideRisk": null,
+    "RedemptionType": null,
+    "RedemptionLogic": null,
+    "RedemptionStructure": null
+  },
+  "RiskParameters": {
+    "PrincipalProtectionPercentage": null,
+    "KnockConditions": null,
+    "ParticipationRate": null
+  },
+  "AccrualFields": {
+    "RangeLower": null,
+    "RangeUpper": null,
+    "Frequency": null
+  },
+  "Other": {
+    "CalculationAgent": null,
+    "ObservationDates": [],
+    "ContingentPaymentDates": [],
+    "InitialEstimatedValue": null,
+    "ObservationTiming": null,
+    "SecurityIdentifier": {
+      "CUSIP": null,
+      "ISIN": null
+    },
+    "IssuerCreditRating": null,
+    "GuarantorCreditRating": null,
+    "TaxCharacterization": null,
+    "StructuringNotes": null
+  }
+}

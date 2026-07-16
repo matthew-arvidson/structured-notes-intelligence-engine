@@ -1,0 +1,41 @@
+{
+  "_comment": "Firm baseline for structured note review. Deviations from these values trigger compare_baseline flagging.",
+  "BarrierLogic": {
+    "BarrierLevel_minimum_acceptable": 0.60,
+    "_note_barrier": "Barrier levels below 60% of starting value require senior analyst sign-off"
+  },
+  "CouponStructure": {
+    "CouponMemory_preferred": true,
+    "_note_memory": "Memory feature preferred — notes without memory require justification for contingent coupon structures"
+  },
+  "RiskParameters": {
+    "PrincipalProtectionPercentage_minimum": 0.0,
+    "_note_principal": "Principal at risk is acceptable but must be explicitly documented in the Downside section"
+  },
+  "CallLogic": {
+    "CallSettlementLag_maximum_days": 5,
+    "_note_settlement": "Settlement lag > 5 business days requires operations review"
+  },
+  "RequiredFields": {
+    "always_required": [
+      "IssuerDetails.Issuer",
+      "IssuerDetails.SettlementDate",
+      "IssuerDetails.MaturityDate",
+      "Other.SecurityIdentifier.CUSIP",
+      "UnderlyingAssets.Underlying",
+      "BarrierLogic.BarrierLevel",
+      "RedemptionTerms.FinalRedemptionLogic"
+    ],
+    "required_if_contingent_coupon": [
+      "CouponStructure.CouponBarrier",
+      "CouponStructure.CouponFrequency"
+    ],
+    "required_if_autocallable": [
+      "CallLogic.CallLevel",
+      "CallLogic.CallSchedule"
+    ],
+    "required_if_worst_of": [
+      "UnderlyingAssets.Underlying"
+    ]
+  }
+}
