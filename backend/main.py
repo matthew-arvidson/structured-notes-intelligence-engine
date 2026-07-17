@@ -104,20 +104,21 @@ async def ingest_upload(
     low_confidence = [f for f, s in confidence_scores.items() if isinstance(s, (int, float)) and s < 90]
 
     return {
-        "cusip":              cusip,
-        "status":             "ok" if not result.get("errors") else "completed_with_errors",
-        "note_type":          result.get("note_type"),
-        "risk_tier":          result.get("risk_tier"),
-        "structure_tags":     result.get("structure_tags", []),
-        "chunks_stored":      result.get("chunks_stored", 0),
-        "db_record_id":       result.get("db_record_id"),
-        "fields_extracted":   len(result.get("extracted_fields", {})),
-        "risk_findings":      len(result.get("risk_findings", [])),
+        "cusip":               cusip,
+        "status":              "ok" if not result.get("errors") else "completed_with_errors",
+        "note_type":           result.get("note_type"),
+        "risk_tier":           result.get("risk_tier"),
+        "structure_tags":      result.get("structure_tags", []),
+        "chunks_stored":       result.get("chunks_stored", 0),
+        "db_record_id":        result.get("db_record_id"),
+        "fields_extracted":    len(result.get("extracted_fields", {})),
+        "risk_findings":       len(result.get("risk_findings", [])),
         "baseline_deviations": result.get("baseline_deviations", []),
-        "matches_baseline":   result.get("matches_baseline", True),
-        "conflicts":          result.get("conflicts", []),
+        "matches_baseline":    result.get("matches_baseline", True),
+        "conflicts":           result.get("conflicts", []),
         "low_confidence_fields": low_confidence,
-        "errors":             result.get("errors", []),
+        "report_path":         result.get("report_path"),
+        "errors":              result.get("errors", []),
     }
 
 
@@ -170,8 +171,19 @@ async def semantic_query():
 
 @app.get("/api/notes/{cusip}/report", tags=["notes"])
 async def get_report(cusip: str):
-    """Phase 4: Retrieve the analyst report for a note."""
-    return {"message": "Not yet implemented — Phase 4", "cusip": cusip}
+    """Return the markdown analyst report for a note, reading from disk if available."""
+    from pathlib import Path
+    detail = crud.get_note_detail(cusip)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"Note with CUSIP {cusip} not found.")
+
+    # Look for a pre-generated report on disk
+    safe_cusip = "".join(c for c in cusip if c.isalnum() or c in "-_")
+    report_path = Path(__file__).parent.parent / "output" / f"{safe_cusip}_report.md"
+    if report_path.exists():
+        return {"cusip": cusip, "report": report_path.read_text(encoding="utf-8")}
+
+    return {"cusip": cusip, "report": None, "message": "Report not yet generated — ingest the note to produce one."}
 
 
 @app.get("/api/audit/{cusip}", tags=["audit"])
