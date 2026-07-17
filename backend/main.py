@@ -3,18 +3,20 @@ FastAPI entry point for the Structured Notes Intelligence Engine.
 
 Run:
     uvicorn backend.main:app --reload --port 3001
-
-Phase 1: Health check + basic structure.
-Phase 2: Add /api/ingest and /api/notes routes.
-Phase 4: Add /api/query (semantic search) and /api/notes/{cusip}/report.
 """
 
 import logging
+import json
+import tempfile
+import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import ALLOWED_ORIGINS, LOG_LEVEL
 from backend.tools.chroma_client import health_check as chroma_health
+from backend.db.engine import ping as db_ping
+from backend.db import crud
+from backend.pipeline.graph import note_analysis_graph
 
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger(__name__)
@@ -22,9 +24,13 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup and shutdown events."""
+    """Startup: ensure DB tables exist."""
     logger.info("Structured Notes Intelligence Engine starting up...")
-    # Phase 2: add db.crud.create_tables() here
+    try:
+        crud.create_tables()
+        logger.info("Database tables ready.")
+    except Exception as exc:
+        logger.error(f"Startup DB table creation failed: {exc}")
     yield
     logger.info("Shutting down.")
 
@@ -32,14 +38,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Structured Notes Intelligence Engine",
     description="RAG-powered structured note analysis with LangGraph orchestration.",
-    version="0.1.0",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,        # set True only if session cookies are needed
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -49,40 +55,112 @@ app.add_middleware(
 
 @app.get("/api/health", tags=["system"])
 async def health():
-    """Ping ChromaDB and return service status."""
+    """Ping ChromaDB and PostgreSQL, return service status."""
     chroma_status = chroma_health()
+    db_ok = db_ping()
+    overall = "ok" if chroma_status["status"] == "ok" and db_ok else "degraded"
     return {
         "service": "structured-notes-intelligence-engine",
-        "status": "ok" if chroma_status["status"] == "ok" else "degraded",
+        "status": overall,
         "chromadb": chroma_status,
+        "database": {"status": "ok" if db_ok else "error"},
     }
 
 
-# ─── Placeholder routes (Phase 2+) ────────────────────────────────────────────
-
-@app.get("/api/notes", tags=["notes"])
-async def list_notes():
-    """Phase 2: List / filter structured notes from Azure SQL."""
-    return {"message": "Not yet implemented — Phase 2"}
-
-
-@app.get("/api/notes/{cusip}", tags=["notes"])
-async def get_note(cusip: str):
-    """Phase 2: Get a single note by CUSIP."""
-    return {"message": f"Not yet implemented — Phase 2", "cusip": cusip}
-
+# ─── Ingest ───────────────────────────────────────────────────────────────────
 
 @app.post("/api/ingest/upload", tags=["ingest"])
-async def ingest_upload():
-    """Phase 2: Upload a PDF term sheet and run the analysis pipeline."""
-    return {"message": "Not yet implemented — Phase 2"}
+async def ingest_upload(
+    file: UploadFile = File(...),
+    cusip: str = Form(...),
+):
+    """
+    Upload a PDF term sheet and run the full analysis pipeline.
+
+    Returns the pipeline result including extracted fields, risk findings,
+    and the database record ID.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+
+    # Save upload to a temp file so the pipeline can read it from disk
+    suffix = os.path.splitext(file.filename)[1]
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        logger.info(f"[ingest] Running pipeline for CUSIP={cusip} file={file.filename}")
+        result = note_analysis_graph.invoke({
+            "cusip": cusip,
+            "pdf_path": tmp_path,
+            "errors": [],
+        })
+    finally:
+        os.unlink(tmp_path)
+
+    return {
+        "cusip":            cusip,
+        "status":           "ok" if not result.get("errors") else "completed_with_errors",
+        "note_type":        result.get("note_type"),
+        "risk_tier":        result.get("risk_tier"),
+        "structure_tags":   result.get("structure_tags", []),
+        "chunks_stored":    result.get("chunks_stored", 0),
+        "db_record_id":     result.get("db_record_id"),
+        "fields_extracted": len(result.get("extracted_fields", {})),
+        "risk_findings":    len(result.get("risk_findings", [])),
+        "errors":           result.get("errors", []),
+    }
 
 
 @app.post("/api/ingest/url", tags=["ingest"])
 async def ingest_url():
-    """Phase 2: Scrape a URL and run the analysis pipeline."""
-    return {"message": "Not yet implemented — Phase 2"}
+    """Phase 4: Scrape a URL and run the analysis pipeline."""
+    return {"message": "Not yet implemented — Phase 4"}
 
+
+# ─── Notes ────────────────────────────────────────────────────────────────────
+
+@app.get("/api/notes", tags=["notes"])
+async def list_notes(
+    issuer: str | None = Query(default=None),
+    settlement_date: str | None = Query(default=None),
+    risk_tier: str | None = Query(default=None),
+    limit: int = Query(default=50, le=200),
+    offset: int = Query(default=0),
+):
+    """List structured notes with optional filters."""
+    notes = crud.list_notes(
+        issuer=issuer,
+        settlement_date=settlement_date,
+        risk_tier=risk_tier,
+        limit=limit,
+        offset=offset,
+    )
+    return {
+        "count": len(notes),
+        "notes": [_note_to_dict(n) for n in notes],
+    }
+
+
+@app.get("/api/notes/{cusip}", tags=["notes"])
+async def get_note(cusip: str):
+    """Get a single note by CUSIP including full extracted fields."""
+    note = crud.get_note_by_cusip(cusip)
+    if note is None:
+        raise HTTPException(status_code=404, detail=f"Note with CUSIP {cusip} not found.")
+    d = _note_to_dict(note)
+    # Include full extracted payload on single-record fetch
+    if note.extracted_fields_json:
+        try:
+            d["extracted_fields"] = json.loads(note.extracted_fields_json)
+        except json.JSONDecodeError:
+            d["extracted_fields"] = {}
+    return d
+
+
+# ─── Semantic search + audit (Phase 4) ────────────────────────────────────────
 
 @app.post("/api/query", tags=["search"])
 async def semantic_query():
@@ -98,5 +176,32 @@ async def get_report(cusip: str):
 
 @app.get("/api/audit/{cusip}", tags=["audit"])
 async def audit_note(cusip: str):
-    """Phase 4: Booking system vs Azure SQL reconciliation."""
+    """Phase 4: Booking system vs PostgreSQL reconciliation."""
     return {"message": "Not yet implemented — Phase 4", "cusip": cusip}
+
+
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+
+def _note_to_dict(note) -> dict:
+    """Serialize a StructuredNote ORM object to a JSON-safe dict."""
+    return {
+        "id":                       note.id,
+        "cusip":                    note.cusip,
+        "isin":                     note.isin,
+        "issuer":                   note.issuer,
+        "guarantor":                note.guarantor,
+        "trade_date":               note.trade_date,
+        "settlement_date":          note.settlement_date,
+        "maturity_date":            note.maturity_date,
+        "note_type":                note.note_type,
+        "structure_tags":           note.get_structure_tags(),
+        "risk_tier":                note.risk_tier,
+        "barrier_level":            note.barrier_level,
+        "principal_protection_pct": note.principal_protection_pct,
+        "has_worst_of":             note.has_worst_of,
+        "has_memory_coupon":        note.has_memory_coupon,
+        "source_file":              note.source_file,
+        "chunks_stored":            note.chunks_stored,
+        "created_at":               note.created_at.isoformat() if note.created_at else None,
+        "updated_at":               note.updated_at.isoformat() if note.updated_at else None,
+    }

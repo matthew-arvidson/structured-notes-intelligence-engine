@@ -1,12 +1,9 @@
 """
-CRUD operations for Azure SQL.
+CRUD operations for Azure PostgreSQL.
 
 Design: typed column updates only — no dynamic SQL from LLM-provided keys.
 All writes go through explicit ORM fields. The raw extracted JSON is stored
-as-is in extracted_fields_json for auditability.
-
-Phase 2: Implement and test upsert_note.
-Phase 1: Stub functions defined.
+as-is in extracted_fields_json for auditability and schema flexibility.
 """
 
 import json
@@ -41,15 +38,100 @@ def upsert_note(
     Upsert a structured note and its related records.
     Returns the database primary key.
 
-    TODO (Phase 2):
-      - Open a session via get_engine()
-      - Check for existing record by CUSIP
-      - Update typed columns from extracted_fields (CUSIP, Issuer, dates, BarrierLevel, etc.)
-      - Delete and re-insert NoteRiskFinding and NoteBaselineDeviation rows
-      - Commit and return the record id
+    On re-ingestion of the same CUSIP:
+      - Core fields and JSON payload are updated in place
+      - Risk findings and baseline deviations are deleted and re-inserted
+        (simpler than diffing them)
     """
-    logger.info(f"[crud] upsert_note stub — CUSIP={cusip}")
-    return -1   # placeholder
+    engine = get_engine()
+
+    # Helper to safely parse a float from extracted fields
+    def _float(key: str) -> float | None:
+        val = extracted_fields.get(key)
+        if val is None:
+            return None
+        try:
+            return float(str(val).replace("%", "").strip())
+        except (ValueError, TypeError):
+            return None
+
+    def _bool(key: str) -> bool:
+        val = extracted_fields.get(key)
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.lower() in ("true", "yes", "1")
+        return False
+
+    with Session(engine) as session:
+        # Check for existing record
+        note = session.query(StructuredNote).filter_by(cusip=cusip).first()
+
+        if note is None:
+            note = StructuredNote(cusip=cusip)
+            session.add(note)
+            logger.info(f"[crud] Creating new record for CUSIP={cusip}")
+        else:
+            logger.info(f"[crud] Updating existing record id={note.id} for CUSIP={cusip}")
+
+        # Update typed identity columns
+        note.isin             = extracted_fields.get("ISIN") or extracted_fields.get("SecurityIdentifier", {}).get("ISIN") if isinstance(extracted_fields.get("SecurityIdentifier"), dict) else extracted_fields.get("ISIN")
+        note.issuer           = extracted_fields.get("Issuer")
+        note.guarantor        = extracted_fields.get("Guarantor")
+        note.trade_date       = extracted_fields.get("TradeDate")
+        note.settlement_date  = extracted_fields.get("SettlementDate")
+        note.maturity_date    = extracted_fields.get("MaturityDate")
+
+        # Classification
+        note.note_type        = note_type
+        note.structure_tags   = json.dumps(structure_tags)
+        note.risk_tier        = risk_tier
+
+        # Key risk fields — typed for dashboard filtering
+        note.barrier_level             = _float("BarrierLevel")
+        note.principal_protection_pct  = _float("PrincipalProtectionPercentage")
+        note.has_worst_of              = "Worst-of" in structure_tags or _bool("WorstOf")
+        note.has_memory_coupon         = "Memory Feature" in structure_tags or _bool("CouponMemory")
+
+        # Full extraction payload (for audit and future schema evolution)
+        note.extracted_fields_json = json.dumps(extracted_fields)
+
+        # Source metadata
+        note.source_file    = source_file
+        note.source_url     = source_url
+        note.chunks_stored  = chunks_stored
+
+        # Flush to get the primary key before inserting related rows
+        session.flush()
+        note_id = note.id
+
+        # Replace risk findings
+        session.query(NoteRiskFinding).filter_by(note_id=note_id).delete()
+        for finding in risk_findings:
+            session.add(NoteRiskFinding(
+                note_id       = note_id,
+                term          = finding.get("term", ""),
+                category      = finding.get("category", ""),
+                severity      = finding.get("severity", "medium"),
+                note_text     = finding.get("note", ""),
+                excerpt       = finding.get("excerpt", ""),
+                source_section= finding.get("section", ""),
+            ))
+
+        # Replace baseline deviations
+        session.query(NoteBaselineDeviation).filter_by(note_id=note_id).delete()
+        for dev in baseline_deviations:
+            session.add(NoteBaselineDeviation(
+                note_id  = note_id,
+                field    = dev.get("field", ""),
+                expected = str(dev.get("expected", "")),
+                actual   = str(dev.get("actual", "")),
+                severity = dev.get("severity", "medium"),
+            ))
+
+        session.commit()
+        logger.info(f"[crud] Committed note id={note_id} with {len(risk_findings)} findings")
+        return note_id
 
 
 def get_note_by_cusip(cusip: str) -> StructuredNote | None:

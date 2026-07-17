@@ -17,7 +17,7 @@ python-multipart>=0.0.9     # file upload support
 
 # ─── Database ─────────────────────────────────────────────────────────────────
 sqlalchemy>=2.0.0
-pyodbc>=5.1.0
+psycopg2-binary>=2.9.0          # PostgreSQL driver (binary = no system libs needed)
 
 # ─── Data / Validation ────────────────────────────────────────────────────────
 pydantic>=2.7.0
