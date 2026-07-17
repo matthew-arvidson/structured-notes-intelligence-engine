@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import Header from "../Components/HeaderSubComponents/header";
-import { QueryResponse } from "@/types";
+import { QueryResponse, StructuredNote } from "@/types";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API = "";
 
 const EXAMPLE_QUESTIONS = [
   "What is the maximum loss an investor can suffer, and under what conditions?",
@@ -21,10 +21,18 @@ const RELEVANCE_COLOR = (r: number) =>
 export default function QueryPage() {
   const [question,  setQuestion]  = useState("");
   const [cusip,     setCusip]     = useState("");
-  const [nResults,  setNResults]  = useState(5);
   const [loading,   setLoading]   = useState(false);
   const [result,    setResult]    = useState<QueryResponse | null>(null);
   const [error,     setError]     = useState<string | null>(null);
+  const [notes,     setNotes]     = useState<StructuredNote[]>([]);
+
+  // Populate the CUSIP dropdown from the notes index
+  useEffect(() => {
+    fetch(`${API}/api/notes?limit=200`)
+      .then((r) => r.json())
+      .then((d) => setNotes(d.notes ?? []))
+      .catch(console.error);
+  }, []);
 
   const ask = async (q?: string) => {
     const finalQ = (q ?? question).trim();
@@ -36,8 +44,8 @@ export default function QueryPage() {
     setResult(null);
 
     try {
-      const body: Record<string, unknown> = { question: finalQ, n_results: nResults };
-      if (cusip.trim()) body.cusip = cusip.trim().toUpperCase();
+      const body: Record<string, unknown> = { question: finalQ, n_results: 5 };
+      if (cusip) body.cusip = cusip;
 
       const r = await fetch(`${API}/api/query`, {
         method: "POST",
@@ -61,7 +69,7 @@ export default function QueryPage() {
       <div className="flex-1 overflow-auto p-4 max-w-4xl mx-auto w-full">
         <h1 className="text-xl font-bold text-white mb-1">Ask a Question</h1>
         <p className="text-gray-500 text-sm mb-4">
-          Natural language search across all ingested term sheets. Every answer cites the source sections it was drawn from.
+          Ask anything about the ingested term sheets. Answers are grounded in the source documents and cite the exact sections they came from.
         </p>
 
         {/* Input area */}
@@ -76,25 +84,22 @@ export default function QueryPage() {
           />
 
           <div className="flex gap-3 flex-wrap items-end">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Filter by CUSIP (optional)</label>
-              <input
-                className="input input-bordered input-sm bg-[#141516] text-white font-mono w-40"
-                placeholder="48136CCJ6"
+            <div className="flex flex-col gap-1 flex-1 min-w-48">
+              <label className="text-xs text-gray-400">Scope (optional — leave blank to search all notes)</label>
+              <select
+                className="select select-bordered select-sm bg-[#141516] text-white w-full"
                 value={cusip}
                 onChange={(e) => setCusip(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-400">Sources to retrieve</label>
-              <select
-                className="select select-bordered select-sm bg-[#141516] text-white w-24"
-                value={nResults}
-                onChange={(e) => setNResults(Number(e.target.value))}
               >
-                {[3, 5, 8, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+                <option value="">All Notes</option>
+                {notes.map((n) => (
+                  <option key={n.cusip} value={n.cusip}>
+                    {n.cusip}{n.issuer ? ` — ${n.issuer.replace("JPMorgan Chase Financial Company LLC", "JPMorgan").slice(0, 40)}` : ""}
+                  </option>
+                ))}
               </select>
             </div>
+
             <button
               className="btn btn-primary btn-sm self-end"
               onClick={() => ask()}
@@ -123,9 +128,7 @@ export default function QueryPage() {
           </div>
         )}
 
-        {error && (
-          <div className="alert alert-error text-sm mb-4">{error}</div>
-        )}
+        {error && <div className="alert alert-error text-sm mb-4">{error}</div>}
 
         {/* Answer */}
         {result && (

@@ -121,6 +121,12 @@ def run(state: NoteAnalysisState) -> dict:
             pass
 
     # ── Rule 4: Required fields present ──────────────────────────────────────
+    # Only apply required-field checks to standard EQ barrier structures.
+    # Warrants, single asset meta-only notes, and non-standard products skip this.
+    _EXEMPT_TYPES = {"Vanilla Warrant", "Digital Warrant", "Single Asset", "Unknown"}
+    note_type = state.get("note_type", "") or ""
+    skip_required_checks = note_type in _EXEMPT_TYPES or risk_tier == "low"
+
     req = baseline.get("RequiredFields", {})
 
     def _check_required(field_path: str, label: str = "") -> bool:
@@ -136,6 +142,8 @@ def run(state: NoteAnalysisState) -> dict:
         return val is not None and str(val).lower() not in ("null", "none", "")
 
     for field_path in req.get("always_required", []):
+        if skip_required_checks:
+            break
         if not _check_required(field_path):
             key = field_path.split(".")[-1]
             deviations.append({
@@ -146,7 +154,7 @@ def run(state: NoteAnalysisState) -> dict:
                 "note":     "Required field missing from extraction",
             })
 
-    if is_contingent:
+    if is_contingent and not skip_required_checks:
         for field_path in req.get("required_if_contingent_coupon", []):
             if not _check_required(field_path):
                 key = field_path.split(".")[-1]
@@ -159,7 +167,7 @@ def run(state: NoteAnalysisState) -> dict:
                 })
 
     is_autocallable = any(t in tags for t in ("Auto-callable", "AutoCallable", "Autocallable"))
-    if is_autocallable:
+    if is_autocallable and not skip_required_checks:
         for field_path in req.get("required_if_autocallable", []):
             if not _check_required(field_path):
                 key = field_path.split(".")[-1]

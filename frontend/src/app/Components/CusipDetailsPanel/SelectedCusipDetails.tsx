@@ -1,16 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Fragment } from "react";
 import ReactMarkdown from "react-markdown";
 import { StructuredNoteDetail } from "@/types";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API = "";
 
 const SEVERITY_COLOR: Record<string, string> = {
   high: "text-red-400", medium: "text-yellow-400", low: "text-green-400",
 };
 const SEVERITY_BADGE: Record<string, string> = {
   high: "badge-error", medium: "badge-warning", low: "badge-success",
+};
+
+const formatVal = (v: unknown): string => {
+  if (v == null) return "";
+  if (typeof v === "object") return JSON.stringify(v);
+  return String(v);
 };
 
 interface Props {
@@ -86,10 +92,12 @@ export default function SelectedCusipDetails({ note, onClose }: Props) {
               ["Worst-of",    note.has_worst_of ? "Yes" : "No"],
               ["Memory Cpn",  note.has_memory_coupon ? "Yes" : "No"],
               ["Chunks",      note.chunks_stored],
-            ].map(([label, val]) => (
-              val != null && val !== "" ? (
-                <><span className="text-gray-500">{label}</span><span>{String(val)}</span></>
-              ) : null
+            ].filter(([, val]) => val != null && val !== "")
+             .map(([label, val]) => (
+              <Fragment key={String(label)}>
+                <span className="text-gray-500">{label}</span>
+                <span>{String(val)}</span>
+              </Fragment>
             ))}
           </div>
           {note.structure_tags?.length > 0 && (
@@ -142,12 +150,17 @@ export default function SelectedCusipDetails({ note, onClose }: Props) {
         {nonNullFields.length > 0 && (
           <Section title={`Extracted Fields (${nonNullFields.length})`}>
             <div className="space-y-1 max-h-64 overflow-auto">
-              {nonNullFields.map(([k, v]) => (
-                <div key={k} className="flex gap-2 text-xs border-b border-gray-700 py-0.5">
-                  <span className="text-gray-500 w-40 shrink-0">{k}</span>
-                  <span className="text-gray-200 break-all">{String(v)}</span>
-                </div>
-              ))}
+              {nonNullFields.map(([k, v]) => {
+                const display = formatVal(v);
+                return (
+                  <div key={k} className="flex gap-2 text-xs border-b border-gray-700 py-0.5">
+                    <span className="text-gray-500 w-40 shrink-0">{k}</span>
+                    <span className="text-gray-200 break-all" title={display}>
+                      {display.length > 120 ? display.slice(0, 120) + "…" : display}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           </Section>
         )}

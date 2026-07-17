@@ -8,7 +8,7 @@ import ImportPanel from "./Components/ImportComponents/ImportPanel";
 import SelectedCusipDetails from "./Components/CusipDetailsPanel/SelectedCusipDetails";
 import { StructuredNote, StructuredNoteDetail } from "@/types";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API = "";
 
 export default function HomePage() {
   const [notes,          setNotes]          = useState<StructuredNote[]>([]);

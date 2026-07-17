@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { IngestResponse } from "@/types";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+const API = "";
 
 interface ImportPanelProps {
   onClose: () => void;
