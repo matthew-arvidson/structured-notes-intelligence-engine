@@ -1,125 +1,106 @@
 # Demo Walkthrough
 
-This document walks through the key capabilities of the Structured Notes Intelligence Engine using real outputs from the live system.
-
----
-
-## The Problem
-
-Two prior developers built versions of this tool and both abandoned it. The core issues:
-
-- **No RAG** — both used one-shot LLM calls on raw PDF text. No retrieval, no grounding, no citations.
-- **Neo4j graph store** — complex dependency, never worked reliably in production.
-- **No intelligence layer** — fields were extracted but never compared against firm baseline rules or scored for confidence.
-- **No audit trail** — LLM answers had no source citations. Analysts couldn't verify claims.
-
----
-
-## What We Built
-
-A full rewrite in ~2 days using RAG-first architecture, LangGraph for deterministic orchestration, and Azure PostgreSQL for persistence.
+A step-by-step guide to what the Structured Notes Intelligence Engine does and how to see it in action.
 
 ---
 
 ## Scene 1 — The Notes Index
 
-After ingesting 4 sample term sheets, the dashboard shows each note with its risk tier, barrier level, and structure type.
+Start the app and you see the full notes grid — every ingested term sheet with its risk tier, barrier level, structure type, and key dates at a glance.
 
 ![Notes grid and analyst report panel](docs/notes-report.png)
 
-**What you're seeing:**
-- AG Grid with risk tier color-coded: `HIGH` (red), `LOW` (green)
-- Click any CUSIP → side panel opens with the full intelligence output
-- The analyst report is rendered inline — this is LLM-generated markdown from `REPORT_PROMPT`, including confidence icons (✅ ⚠️ ➖), conflict review, and a plain-language summary
+Click any CUSIP and the detail panel opens on the right with the full intelligence output:
 
-The report for `48136CCJ6` (JPMorgan Buffered Note) opened in this panel:
-- Correctly identified it as a **worst-of, principal-at-risk** structure
-- Flagged the 20% buffer as ambiguous ("barrier level" vs. "buffer amount" — a real wording issue in the contract)
-- Used ➖ for coupon and call fields — they don't exist on this note type, so they're structurally null, not low confidence
+- **Risk Findings** — rule-based scan for worst-of provisions, leverage terms, autocall triggers, and credit risk language
+- **Baseline Deviations** — automated comparison against firm-standard rules (barrier minimums, required fields, settlement lag limits)
+- **Extracted Fields** — all 50+ UEQSN schema fields pulled from the source document
+- **Analyst Report** — LLM-generated markdown with confidence icons (✅ high confidence, ⚠️ moderate, ➖ structurally not applicable), a plain-language summary, and a conflict review section
+
+The `48136CCJ6` JPMorgan Buffered Note shown here was correctly identified as a worst-of, principal-at-risk structure. The report flagged an ambiguity in the contract wording around "barrier level" vs. "buffer amount" — a genuine drafting issue in the source document.
 
 ---
 
 ## Scene 2 — Ask a Question
 
-The query page lets anyone ask a plain-English question about any note — or across all notes at once.
+Navigate to **Ask a Question** in the header. Use the scope dropdown to target a specific note or leave it on **All Notes** to search across your entire book.
 
 ![Query page with scope dropdown](docs/query-page.png)
 
-The scope dropdown is populated from the notes index. "All Notes" searches across all ingested documents. Scoping to a CUSIP narrows the retrieval to that contract only.
+Questions can be as broad or specific as you need:
+
+- *"Which notes have a worst-of structure?"*
+- *"What is the maximum loss on this note and under what conditions?"*
+- *"Are there any notes where the barrier is below 60%?"*
+- *"What is the issuer's credit rating and who is the guarantor?"*
 
 ---
 
-## Scene 3 — The Answer
+## Scene 3 — A Grounded, Cited Answer
 
-A compliance analyst asks: **"is this contract high risk?"**
+Every answer is grounded in the source document. The engine retrieves the most relevant chunks from ChromaDB, passes them to the LLM with the question, and returns an answer where every claim cites the exact section it came from.
 
-![RAG answer with citations](docs/rag-answer.png)
+![RAG answer: is this contract high risk?](docs/rag-answer.png)
 
-**What the engine returned:**
-1. **Yes** — with 5 specific reasons, all cited back to source sections
-2. Principal at risk (up to 80% loss) cited from `[1][4]`
-3. Worst-of structure cited from `[3]`
-4. No income (no coupons, no dividends) cited from `[3]`
-5. Issuer credit risk (JPMorgan Financial / Chase & Co.) cited from `[1][3]`
-6. Liquidity risk and embedded fee discount cited from `[3][2]`
-
-Every bullet is grounded. No hallucination possible — the LLM only sees the retrieved chunks.
-
-This replaces what previously required an analyst to read the full 40-page term sheet manually.
+The response to *"is this contract high risk?"* returned five specific risk factors — principal loss up to 80%, worst-of structure, no income, issuer credit risk, liquidity and valuation risk — each cited back to the payment or preamble section of the term sheet. Nothing is inferred from LLM memory. If it isn't in the document, it won't appear in the answer.
 
 ---
 
-## Scene 4 — Cross-Note Global Queries
+## Scene 4 — Global Cross-Note Queries
 
-Because all notes share the same ChromaDB collection, you can ask questions across your entire book:
+Because all notes share a single ChromaDB collection, queries naturally span your entire book when no scope is selected:
 
-> "Which notes have a worst-of structure linked to multiple indices?"
+> *"Which notes have a dual directional payoff?"*
 
-> "Are there any notes with a barrier below 60%?"
+> *"Find all notes where the participation rate is at least 1.2x."*
 
-> "Which issuer has the most notes with principal at risk?"
+> *"Are there any notes issued by Credit Agricole?"*
 
-The answers cite the specific CUSIP and section for each claim — every answer is auditable.
+Each answer cites the CUSIP and source section for every claim — fully auditable across the whole portfolio.
 
 ---
 
-## Running It Yourself
+## Running It
 
 ```bash
-# Deploy Azure infra (one time)
-.\infra\deploy.ps1 -SqlPassword <yourpassword>
-
-# Start backend
+# Start the API (from project root)
 python -m uvicorn backend.main:app --reload --port 3001
 
-# Start frontend
+# Start the frontend (separate terminal)
 cd frontend && npm run dev
-
-# Open http://localhost:3000
+# → http://localhost:3000
 ```
 
-Ingest a term sheet via **+ Ingest PDF** in the header, or use the API directly:
+Ingest a term sheet via **+ Ingest PDF** in the header, or call the API directly:
 
 ```python
 import requests
+
 with open("your_termsheet.pdf", "rb") as f:
-    r = requests.post("http://localhost:3001/api/ingest/upload",
-                      data={"cusip": "YOUR_CUSIP"},
-                      files={"file": f})
+    r = requests.post(
+        "http://localhost:3001/api/ingest/upload",
+        data={"cusip": "YOUR_CUSIP"},
+        files={"file": f},
+    )
 print(r.json())
 ```
 
-See [README.md](README.md) for full setup instructions.
+Azure infrastructure (OpenAI, PostgreSQL, Key Vault) is fully defined in `infra/` — deploy with one command:
+
+```powershell
+.\infra\deploy.ps1 -SqlPassword <yourpassword>
+```
+
+See [README.md](README.md) for full environment setup.
 
 ---
 
-## What This Demonstrates
+## Capability Summary
 
-| Capability | Evidence |
+| Capability | How It Works |
 |---|---|
-| RAG is working | Citations `[1][3]` trace to specific chunks and sections |
-| Auditable AI | Every finding links to retrieved source text, not LLM memory |
-| Cost-aware routing | LOW notes skip the full intelligence chain (6 fields vs 52) |
-| Domain-aware rules | Barrier < 60% flagged deterministically, no LLM needed |
-| Production patterns | LangGraph, pinned deps, proper secrets, fail-fast config |
-| Reproducible infra | Bicep IaC — any developer, any day, one command |
+| Grounded answers | Every claim cites the retrieved chunk — no LLM memory |
+| Cost-aware routing | LOW-tier notes skip the full chain (6 fields vs 52) |
+| Auditable risk flags | Barrier, worst-of, autocall caught by deterministic rules |
+| Reproducible infra | Bicep IaC — spin up or tear down with a single command |
+| Cross-note search | All notes in one ChromaDB collection — global queries work out of the box |
