@@ -135,10 +135,77 @@ def upsert_note(
 
 
 def get_note_by_cusip(cusip: str) -> StructuredNote | None:
-    """Fetch a single note by CUSIP. Returns None if not found."""
+    """Fetch a single note by CUSIP (no relationships loaded). Returns None if not found."""
     engine = get_engine()
     with Session(engine) as session:
         return session.query(StructuredNote).filter_by(cusip=cusip).first()
+
+
+def get_note_detail(cusip: str) -> dict | None:
+    """
+    Fetch a note with all related records serialized within the session.
+
+    Returns a fully-serialized dict so callers don't need an open session.
+    Includes risk_findings and baseline_deviations from the DB.
+    """
+    engine = get_engine()
+    with Session(engine) as session:
+        note = session.query(StructuredNote).filter_by(cusip=cusip).first()
+        if note is None:
+            return None
+
+        findings = session.query(NoteRiskFinding).filter_by(note_id=note.id).all()
+        deviations = session.query(NoteBaselineDeviation).filter_by(note_id=note.id).all()
+
+        extracted_fields = {}
+        if note.extracted_fields_json:
+            try:
+                extracted_fields = json.loads(note.extracted_fields_json)
+            except json.JSONDecodeError:
+                pass
+
+        return {
+            "id":                       note.id,
+            "cusip":                    note.cusip,
+            "isin":                     note.isin,
+            "issuer":                   note.issuer,
+            "guarantor":                note.guarantor,
+            "trade_date":               note.trade_date,
+            "settlement_date":          note.settlement_date,
+            "maturity_date":            note.maturity_date,
+            "note_type":                note.note_type,
+            "structure_tags":           note.get_structure_tags(),
+            "risk_tier":                note.risk_tier,
+            "barrier_level":            note.barrier_level,
+            "principal_protection_pct": note.principal_protection_pct,
+            "has_worst_of":             note.has_worst_of,
+            "has_memory_coupon":        note.has_memory_coupon,
+            "source_file":              note.source_file,
+            "chunks_stored":            note.chunks_stored,
+            "created_at":               note.created_at.isoformat() if note.created_at else None,
+            "updated_at":               note.updated_at.isoformat() if note.updated_at else None,
+            "extracted_fields":         extracted_fields,
+            "risk_findings": [
+                {
+                    "term":           f.term,
+                    "category":       f.category,
+                    "severity":       f.severity,
+                    "note":           f.note_text,
+                    "excerpt":        f.excerpt,
+                    "source_section": f.source_section,
+                }
+                for f in findings
+            ],
+            "baseline_deviations": [
+                {
+                    "field":    d.field,
+                    "expected": d.expected,
+                    "actual":   d.actual,
+                    "severity": d.severity,
+                }
+                for d in deviations
+            ],
+        }
 
 
 def list_notes(

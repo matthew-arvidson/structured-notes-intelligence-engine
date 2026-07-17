@@ -100,17 +100,24 @@ async def ingest_upload(
     finally:
         os.unlink(tmp_path)
 
+    confidence_scores = result.get("confidence_scores", {})
+    low_confidence = [f for f, s in confidence_scores.items() if isinstance(s, (int, float)) and s < 90]
+
     return {
-        "cusip":            cusip,
-        "status":           "ok" if not result.get("errors") else "completed_with_errors",
-        "note_type":        result.get("note_type"),
-        "risk_tier":        result.get("risk_tier"),
-        "structure_tags":   result.get("structure_tags", []),
-        "chunks_stored":    result.get("chunks_stored", 0),
-        "db_record_id":     result.get("db_record_id"),
-        "fields_extracted": len(result.get("extracted_fields", {})),
-        "risk_findings":    len(result.get("risk_findings", [])),
-        "errors":           result.get("errors", []),
+        "cusip":              cusip,
+        "status":             "ok" if not result.get("errors") else "completed_with_errors",
+        "note_type":          result.get("note_type"),
+        "risk_tier":          result.get("risk_tier"),
+        "structure_tags":     result.get("structure_tags", []),
+        "chunks_stored":      result.get("chunks_stored", 0),
+        "db_record_id":       result.get("db_record_id"),
+        "fields_extracted":   len(result.get("extracted_fields", {})),
+        "risk_findings":      len(result.get("risk_findings", [])),
+        "baseline_deviations": result.get("baseline_deviations", []),
+        "matches_baseline":   result.get("matches_baseline", True),
+        "conflicts":          result.get("conflicts", []),
+        "low_confidence_fields": low_confidence,
+        "errors":             result.get("errors", []),
     }
 
 
@@ -146,18 +153,11 @@ async def list_notes(
 
 @app.get("/api/notes/{cusip}", tags=["notes"])
 async def get_note(cusip: str):
-    """Get a single note by CUSIP including full extracted fields."""
-    note = crud.get_note_by_cusip(cusip)
-    if note is None:
+    """Get a single note by CUSIP including extracted fields, risk findings, and baseline deviations."""
+    detail = crud.get_note_detail(cusip)
+    if detail is None:
         raise HTTPException(status_code=404, detail=f"Note with CUSIP {cusip} not found.")
-    d = _note_to_dict(note)
-    # Include full extracted payload on single-record fetch
-    if note.extracted_fields_json:
-        try:
-            d["extracted_fields"] = json.loads(note.extracted_fields_json)
-        except json.JSONDecodeError:
-            d["extracted_fields"] = {}
-    return d
+    return detail
 
 
 # ─── Semantic search + audit (Phase 4) ────────────────────────────────────────

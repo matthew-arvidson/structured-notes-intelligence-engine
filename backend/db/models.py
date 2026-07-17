@@ -34,9 +34,9 @@ class StructuredNote(Base):
     # Core identity — typed for filtering in the dashboard
     issuer = Column(String(255), nullable=True)
     guarantor = Column(String(255), nullable=True)
-    trade_date = Column(String(20), nullable=True)       # ISO date string
-    settlement_date = Column(String(20), nullable=True, index=True)
-    maturity_date = Column(String(20), nullable=True)
+    trade_date = Column(Text, nullable=True)       # free-form date string from extraction
+    settlement_date = Column(Text, nullable=True, index=True)
+    maturity_date = Column(Text, nullable=True)
 
     # Classification
     note_type = Column(String(100), nullable=True)       # primary structure tag
