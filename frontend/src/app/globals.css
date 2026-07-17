@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@plugin "daisyui";
+@plugin "@tailwindcss/typography";
+
+body {
+  background-color: #141516;
+  color: lightgrey;
+}
+
+.ag-theme-quartz-dark {
+  --ag-background-color: #141516;
+  --ag-odd-row-background-color: #1c1d1e;
+  --ag-foreground-color: #ddd;
+  --ag-header-background-color: #2a2b2c;
+  --ag-header-height: 28px;
+  --ag-font-size: 16px;
+  --ag-cell-vertical-padding: 2px;
+}
+
+.ag-theme-quartz-dark .ag-cell-value {
+  display: flex;
+  align-items: center;
+  padding: 2px 4px;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.animate-spin { animation: spin 1s linear infinite; }
