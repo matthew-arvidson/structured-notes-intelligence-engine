@@ -12,6 +12,7 @@ import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from backend.config import ALLOWED_ORIGINS, LOG_LEVEL
 from backend.tools.chroma_client import health_check as chroma_health
 from backend.db.engine import ping as db_ping
@@ -163,10 +164,107 @@ async def get_note(cusip: str):
 
 # ─── Semantic search + audit (Phase 4) ────────────────────────────────────────
 
+class QueryRequest(BaseModel):
+    question: str
+    cusip: str | None = None
+    n_results: int = 5
+
+
 @app.post("/api/query", tags=["search"])
-async def semantic_query():
-    """Phase 4: Natural language → ChromaDB semantic search across all notes."""
-    return {"message": "Not yet implemented — Phase 4"}
+async def semantic_query(request: QueryRequest):
+    """
+    Natural language query across all ingested notes via RAG.
+
+    Body: {"question": "...", "cusip": "optional filter", "n_results": 5}
+
+    Embeds the question, retrieves top-k chunks from ChromaDB,
+    then asks the LLM to answer using only the retrieved context.
+    Returns the answer + source citations so every claim is traceable.
+    """
+    from backend.tools.chroma_client import get_collection
+    from backend.tools.llm_client import get_chat_llm
+    from langchain_openai import AzureOpenAIEmbeddings
+    from backend.config import (
+        AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
+        AZURE_OPENAI_API_VERSION, AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+    )
+
+    question = request.question.strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="'question' field is required.")
+
+    cusip_filter = request.cusip
+    n_results = min(request.n_results, 20)
+
+    # ── Embed the question ────────────────────────────────────────────────────
+    embedder = AzureOpenAIEmbeddings(
+        azure_endpoint=AZURE_OPENAI_ENDPOINT,
+        api_key=AZURE_OPENAI_API_KEY,
+        api_version=AZURE_OPENAI_API_VERSION,
+        model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+    )
+    query_embedding = embedder.embed_query(question)
+
+    # ── Retrieve from ChromaDB ────────────────────────────────────────────────
+    collection = get_collection()
+    where = {"cusip": cusip_filter} if cusip_filter else None
+    results = collection.query(
+        query_embeddings=[query_embedding],
+        n_results=n_results,
+        where=where,
+        include=["documents", "metadatas", "distances"],
+    )
+
+    docs = results.get("documents", [[]])[0]
+    metas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+
+    if not docs:
+        return {
+            "question": question,
+            "answer": "No relevant content found in the ingested notes.",
+            "sources": [],
+        }
+
+    # ── Build context block ───────────────────────────────────────────────────
+    context_parts = []
+    sources = []
+    for i, (doc, meta, dist) in enumerate(zip(docs, metas, distances), start=1):
+        cusip = meta.get("cusip", "unknown")
+        section = meta.get("section", "")
+        page = meta.get("page", "")
+        context_parts.append(f"[{i}] CUSIP={cusip} | Section={section} | Page={page}\n{doc}")
+        sources.append({
+            "rank":      i,
+            "cusip":     cusip,
+            "section":   section,
+            "page":      page,
+            "relevance": round(1 - float(dist), 3),
+            "excerpt":   doc[:200],
+        })
+
+    context = "\n\n---\n\n".join(context_parts)
+
+    # ── LLM answer ────────────────────────────────────────────────────────────
+    system_msg = (
+        "You are a structured product analyst. Answer the user's question using ONLY "
+        "the retrieved term sheet excerpts below. Cite your sources using [1], [2] etc. "
+        "If the answer cannot be found in the context, say so explicitly. "
+        "Be concise and precise — this is for internal analyst use."
+    )
+    user_msg = f"Question: {question}\n\nContext:\n{context}"
+
+    llm = get_chat_llm()
+    response = llm.invoke([
+        {"role": "system", "content": system_msg},
+        {"role": "user",   "content": user_msg},
+    ])
+
+    return {
+        "question": question,
+        "answer":   response.content.strip(),
+        "sources":  sources,
+    }
 
 
 @app.get("/api/notes/{cusip}/report", tags=["notes"])
