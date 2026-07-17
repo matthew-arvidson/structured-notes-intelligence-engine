@@ -42,7 +42,7 @@ Every answer is grounded in the source document. The engine retrieves the most r
 
 ![RAG answer: is this contract high risk?](docs/rag-answer.png)
 
-The response to *"is this contract high risk?"* returned five specific risk factors — principal loss up to 80%, worst-of structure, no income, issuer credit risk, liquidity and valuation risk — each cited back to the payment or preamble section of the term sheet. Nothing is inferred from LLM memory. If it isn't in the document, it won't appear in the answer.
+The response to *"is this contract high risk?"* returned five specific risk factors — principal loss up to 80%, worst-of structure, no income, issuer credit risk, liquidity and valuation risk — each cited back to the payment or preamble section of the term sheet. The engine answers from retrieved source material rather than relying on general model knowledge, so every claim ties back to a specific section of the document.
 
 ---
 
