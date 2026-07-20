@@ -17,6 +17,7 @@ export default function HomePage() {
   const [selectedIssuer, setSelectedIssuer] = useState("");
   const [riskTier,       setRiskTier]       = useState("");
   const [isImportOpen,   setIsImportOpen]   = useState(false);
+  const [importKey,      setImportKey]      = useState(0);
   const [selectedCusip,  setSelectedCusip]  = useState<string | null>(null);
   const [cusipDetail,    setCusipDetail]    = useState<StructuredNoteDetail | null>(null);
   const [loading,        setLoading]        = useState(false);
@@ -68,7 +69,7 @@ export default function HomePage() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <Header onImportClick={() => { setSelectedCusip(null); setIsImportOpen(true); }}>
+      <Header onImportClick={() => { setSelectedCusip(null); setImportKey((k) => k + 1); setIsImportOpen(true); }}>
         <CusipFilter
           search={search}
           onSearchChange={setSearch}
@@ -98,11 +99,14 @@ export default function HomePage() {
           <div className="flex flex-col basis-2/5 min-h-0 transition-all duration-300 rounded shadow overflow-hidden">
             {isImportOpen ? (
               <ImportPanel
+                key={importKey}
                 onClose={() => setIsImportOpen(false)}
                 onIngestComplete={fetchNotes}
+                onOpenNote={(cusip) => { setIsImportOpen(false); setSelectedCusip(cusip); }}
               />
             ) : cusipDetail ? (
               <SelectedCusipDetails
+                key={cusipDetail.cusip}
                 note={cusipDetail}
                 onClose={() => setSelectedCusip(null)}
               />

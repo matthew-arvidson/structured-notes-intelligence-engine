@@ -69,7 +69,7 @@ export default function QueryPage() {
       <div className="flex-1 overflow-auto p-4 max-w-4xl mx-auto w-full">
         <h1 className="text-xl font-bold text-white mb-1">Ask a Question</h1>
         <p className="text-gray-500 text-sm mb-4">
-          Ask anything about the ingested term sheets. Answers are grounded in the source documents and cite the exact sections they came from.
+          Ask anything about a specific term sheet. Answers are grounded in the source document and cite the exact sections they came from.
         </p>
 
         {/* Input area */}
@@ -85,13 +85,13 @@ export default function QueryPage() {
 
           <div className="flex gap-3 flex-wrap items-end">
             <div className="flex flex-col gap-1 flex-1 min-w-48">
-              <label className="text-xs text-gray-400">Scope (optional — leave blank to search all notes)</label>
+              <label className="text-xs text-gray-400">Note</label>
               <select
                 className="select select-bordered select-sm bg-[#141516] text-white w-full"
                 value={cusip}
                 onChange={(e) => setCusip(e.target.value)}
               >
-                <option value="">All Notes</option>
+                <option value="" disabled>Select a note…</option>
                 {notes.map((n) => (
                   <option key={n.cusip} value={n.cusip}>
                     {n.cusip}{n.issuer ? ` — ${n.issuer.replace("JPMorgan Chase Financial Company LLC", "JPMorgan").slice(0, 40)}` : ""}
@@ -103,7 +103,7 @@ export default function QueryPage() {
             <button
               className="btn btn-primary btn-sm self-end"
               onClick={() => ask()}
-              disabled={loading || !question.trim()}
+              disabled={loading || !question.trim() || !cusip}
             >
               {loading ? <span className="animate-spin">⏳</span> : "Ask"}
             </button>

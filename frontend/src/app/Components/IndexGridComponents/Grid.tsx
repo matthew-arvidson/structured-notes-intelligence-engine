@@ -13,6 +13,15 @@ const TIER_COLORS: Record<string, string> = {
   low:    "text-green-400",
 };
 
+const BLANK_TITLE = "Not present in this document — may not apply to this note type";
+
+function BlankCell({ value }: { value: string }) {
+  if (value && value !== "—") return <span>{value}</span>;
+  return (
+    <span className="text-gray-600 cursor-help" title={BLANK_TITLE}>—</span>
+  );
+}
+
 type GridProps = {
   notes: StructuredNote[];
   onCusipClick?: (cusip: string) => void;
@@ -35,7 +44,9 @@ export default function Grid({ notes, onCusipClick }: GridProps) {
         </button>
       ),
     },
-    { field: "issuer",          headerName: "Issuer",        flex: 2 },
+    { field: "issuer",          headerName: "Issuer",        flex: 2,
+      cellRenderer: (params: { value: string }) => <BlankCell value={params.value} />,
+    },
     { field: "note_type",       headerName: "Type",          flex: 1.5 },
     {
       field: "risk_tier",
@@ -51,15 +62,31 @@ export default function Grid({ notes, onCusipClick }: GridProps) {
       field: "barrier_level",
       headerName: "Barrier",
       flex: 0.8,
-      valueFormatter: (p) => p.value != null ? `${p.value}%` : "—",
+      cellRenderer: (params: { value: number | null }) =>
+        params.value != null
+          ? <span>{params.value}%</span>
+          : <BlankCell value="—" />,
     },
-    { field: "settlement_date", headerName: "Settlement",    flex: 1 },
-    { field: "maturity_date",   headerName: "Maturity",      flex: 1 },
+    {
+      field: "settlement_date",
+      headerName: "Settlement",
+      flex: 1,
+      cellRenderer: (params: { value: string }) => <BlankCell value={params.value} />,
+    },
+    {
+      field: "maturity_date",
+      headerName: "Maturity",
+      flex: 1,
+      cellRenderer: (params: { value: string }) => <BlankCell value={params.value} />,
+    },
     {
       field: "has_worst_of",
       headerName: "Worst-of",
       flex: 0.7,
-      valueFormatter: (p) => p.value ? "Yes" : "—",
+      cellRenderer: (params: { value: boolean }) =>
+        params.value
+          ? <span>Yes</span>
+          : <BlankCell value="—" />,
     },
   ];
 

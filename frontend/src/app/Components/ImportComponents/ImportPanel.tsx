@@ -8,48 +8,82 @@ const API = "";
 interface ImportPanelProps {
   onClose: () => void;
   onIngestComplete?: () => void;
+  onOpenNote?: (cusip: string) => void;
 }
 
-export default function ImportPanel({ onClose, onIngestComplete }: ImportPanelProps) {
+export default function ImportPanel({ onClose, onIngestComplete, onOpenNote }: ImportPanelProps) {
   const [cusip, setCusip]       = useState("");
   const [file, setFile]         = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [progress, setProgress] = useState<string | null>(null);
   const [result, setResult]     = useState<IngestResponse | null>(null);
   const [error, setError]       = useState<string | null>(null);
 
   const handleUpload = async () => {
-    if (!file)  { setError("Please select a PDF file."); return; }
+    if (!file)        { setError("Please select a PDF file."); return; }
     if (!cusip.trim()) { setError("Please enter the CUSIP for this note."); return; }
 
     setIsUploading(true);
     setError(null);
     setResult(null);
+    setProgress("Uploading…");
 
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("cusip", cusip.trim().toUpperCase());
 
+      // Submit — returns immediately with a job_id
       const res = await fetch(`${API}/api/ingest/upload`, { method: "POST", body: form });
-
       if (!res.ok) {
         const err = await res.text();
         throw new Error(err || `HTTP ${res.status}`);
       }
 
-      const data: IngestResponse = await res.json();
+      const { job_id } = await res.json();
+      setProgress("Pipeline running — this takes 30–60 seconds…");
+
+      // Poll until done
+      const data = await poll(job_id);
       setResult(data);
       onIngestComplete?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
       setIsUploading(false);
+      setProgress(null);
+    }
+  };
+
+  const poll = async (job_id: string): Promise<IngestResponse> => {
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const r = await fetch(`${API}/api/ingest/status/${job_id}`);
+      if (!r.ok) throw new Error(`Status check failed: HTTP ${r.status}`);
+      const data = await r.json();
+      if (data.status === "processing") continue;
+      if (data.status === "error") throw new Error(data.error ?? "Pipeline error");
+      return data as IngestResponse;
     }
   };
 
   const SEVERITY_COLOR: Record<string, string> = {
     high: "text-red-400", medium: "text-yellow-400", low: "text-green-400",
   };
+
+  const SEVERITY_DOT: Record<string, string> = {
+    high: "bg-red-400", medium: "bg-yellow-400", low: "bg-green-400",
+  };
+
+  /** "SettlementDate" → "Settlement Date", "CUSIP" stays "CUSIP" */
+  function humanField(field: string) {
+    return field.replace(/([a-z])([A-Z])/g, "$1 $2");
+  }
+
+  function deviationMessage(expected: string, actual: string) {
+    if (actual === "null" || actual == null) return "not found in document";
+    return `expected ${expected}, found ${actual}`;
+  }
 
   return (
     <div className="flex flex-col flex-1 min-h-0 bg-gray-800 rounded p-4 gap-3">
@@ -62,18 +96,22 @@ export default function ImportPanel({ onClose, onIngestComplete }: ImportPanelPr
             placeholder="CUSIP (e.g. 48136CCJ6)"
             className="input input-bordered input-sm w-full bg-gray-700 text-white placeholder-gray-400 font-mono"
             value={cusip}
-            onChange={(e) => setCusip(e.target.value)}
+            onChange={(e) => { setCusip(e.target.value); setError(null); }}
           />
 
           <input
             type="file"
             accept=".pdf"
             className="file-input file-input-bordered file-input-sm w-full bg-gray-700 text-white"
-            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            onChange={(e) => { setFile(e.target.files?.[0] ?? null); setError(null); }}
           />
           {file && <p className="text-gray-400 text-xs">Selected: {file.name}</p>}
 
           {error && <p className="text-red-400 text-xs">{error}</p>}
+
+          {progress && (
+            <p className="text-blue-400 text-xs animate-pulse">{progress}</p>
+          )}
 
           <div className="flex gap-2 mt-auto">
             <button
@@ -84,7 +122,7 @@ export default function ImportPanel({ onClose, onIngestComplete }: ImportPanelPr
               {isUploading && <span className="animate-spin mr-2">⏳</span>}
               {isUploading ? "Analysing…" : "Ingest & Analyse"}
             </button>
-            <button className="btn btn-sm flex-1" onClick={onClose}>Cancel</button>
+            <button className="btn btn-sm flex-1" onClick={onClose} disabled={isUploading}>Cancel</button>
           </div>
         </>
       ) : (
@@ -115,10 +153,11 @@ export default function ImportPanel({ onClose, onIngestComplete }: ImportPanelPr
 
           {result.baseline_deviations.length > 0 && (
             <div>
-              <p className="text-xs text-gray-400 font-semibold mb-1">Baseline Deviations</p>
+              <p className="text-xs text-gray-400 font-semibold mb-1">Review Items</p>
               {result.baseline_deviations.map((d, i) => (
-                <div key={i} className={`text-xs ${SEVERITY_COLOR[d.severity]}`}>
-                  [{d.severity.toUpperCase()}] {d.field}: expected {d.expected}, got {d.actual}
+                <div key={i} className="flex items-center gap-1.5 text-xs text-gray-300 py-0.5">
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${SEVERITY_DOT[d.severity] ?? "bg-gray-400"}`} />
+                  <span>{humanField(d.field)} — {deviationMessage(d.expected, d.actual)}</span>
                 </div>
               ))}
             </div>
@@ -134,7 +173,12 @@ export default function ImportPanel({ onClose, onIngestComplete }: ImportPanelPr
           )}
 
           <div className="flex gap-2 pt-2">
-            <button className="btn btn-sm flex-1" onClick={() => setResult(null)}>Ingest Another</button>
+            <button
+              className="btn btn-primary btn-sm flex-1"
+              onClick={() => { onOpenNote?.(result.cusip); onClose(); }}
+            >
+              Open Note
+            </button>
             <button className="btn btn-sm flex-1" onClick={onClose}>Close</button>
           </div>
         </div>

@@ -75,12 +75,29 @@ def upsert_note(
             logger.info(f"[crud] Updating existing record id={note.id} for CUSIP={cusip}")
 
         # Update typed identity columns
-        note.isin             = extracted_fields.get("ISIN") or extracted_fields.get("SecurityIdentifier", {}).get("ISIN") if isinstance(extracted_fields.get("SecurityIdentifier"), dict) else extracted_fields.get("ISIN")
-        note.issuer           = extracted_fields.get("Issuer")
-        note.guarantor        = extracted_fields.get("Guarantor")
-        note.trade_date       = extracted_fields.get("TradeDate")
-        note.settlement_date  = extracted_fields.get("SettlementDate")
-        note.maturity_date    = extracted_fields.get("MaturityDate")
+        def _field(*keys: str):
+            """Try multiple key paths, including nested IssuerDetails, returning first non-null value."""
+            for key in keys:
+                if "." in key:
+                    parts = key.split(".", 1)
+                    parent = extracted_fields.get(parts[0])
+                    if isinstance(parent, dict):
+                        val = parent.get(parts[1])
+                        if val not in (None, "", "null"):
+                            return val
+                else:
+                    val = extracted_fields.get(key)
+                    if val not in (None, "", "null"):
+                        return val
+            return None
+
+        note.isin             = _field("ISIN", "IssuerDetails.ISIN", "SecurityIdentifier.ISIN",
+                                       "Other.SecurityIdentifier.ISIN")
+        note.issuer           = _field("Issuer", "IssuerDetails.Issuer")
+        note.guarantor        = _field("Guarantor", "IssuerDetails.Guarantor")
+        note.trade_date       = _field("TradeDate", "IssuerDetails.TradeDate")
+        note.settlement_date  = _field("SettlementDate", "IssuerDetails.SettlementDate")
+        note.maturity_date    = _field("MaturityDate", "IssuerDetails.MaturityDate")
 
         # Classification
         note.note_type        = note_type

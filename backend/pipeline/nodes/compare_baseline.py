@@ -125,6 +125,7 @@ def run(state: NoteAnalysisState) -> dict:
     # Warrants, single asset meta-only notes, and non-standard products skip this.
     _EXEMPT_TYPES = {"Vanilla Warrant", "Digital Warrant", "Single Asset", "Unknown"}
     note_type = state.get("note_type", "") or ""
+    risk_tier = state.get("risk_tier", "") or ""
     skip_required_checks = note_type in _EXEMPT_TYPES or risk_tier == "low"
 
     req = baseline.get("RequiredFields", {})

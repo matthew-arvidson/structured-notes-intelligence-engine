@@ -9,6 +9,8 @@ import logging
 import json
 import tempfile
 import os
+import uuid
+import threading
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +23,9 @@ from backend.pipeline.graph import note_analysis_graph
 
 logging.basicConfig(level=LOG_LEVEL)
 logger = logging.getLogger(__name__)
+
+# In-memory job store: job_id → {status, result, error}
+_jobs: dict[str, dict] = {}
 
 
 @asynccontextmanager
@@ -76,51 +81,75 @@ async def ingest_upload(
     cusip: str = Form(...),
 ):
     """
-    Upload a PDF term sheet and run the full analysis pipeline.
+    Upload a PDF term sheet and start the analysis pipeline in the background.
 
-    Returns the pipeline result including extracted fields, risk findings,
-    and the database record ID.
+    Returns immediately with a job_id. Poll GET /api/ingest/status/{job_id}
+    for progress and the final result.
     """
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-    # Save upload to a temp file so the pipeline can read it from disk
+    # Write upload to a temp file the background thread can read
     suffix = os.path.splitext(file.filename)[1]
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
-        tmp.write(content)
-        tmp_path = tmp.name
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.write(await file.read())
+    tmp.close()
+    tmp_path = tmp.name
 
-    try:
-        logger.info(f"[ingest] Running pipeline for CUSIP={cusip} file={file.filename}")
-        result = note_analysis_graph.invoke({
-            "cusip": cusip,
-            "pdf_path": tmp_path,
-            "errors": [],
-        })
-    finally:
-        os.unlink(tmp_path)
+    job_id = str(uuid.uuid4())
+    _jobs[job_id] = {"status": "processing", "cusip": cusip}
 
-    confidence_scores = result.get("confidence_scores", {})
-    low_confidence = [f for f, s in confidence_scores.items() if isinstance(s, (int, float)) and s < 90]
+    def _run(job_id: str, cusip: str, tmp_path: str) -> None:
+        try:
+            logger.info(f"[ingest] job={job_id} CUSIP={cusip} starting pipeline")
+            result = note_analysis_graph.invoke({
+                "cusip": cusip,
+                "pdf_path": tmp_path,
+                "errors": [],
+            })
+            confidence_scores = result.get("confidence_scores", {})
+            low_confidence = [
+                f for f, s in confidence_scores.items()
+                if isinstance(s, (int, float)) and s < 90
+            ]
+            _jobs[job_id] = {
+                "status":              "ok" if not result.get("errors") else "completed_with_errors",
+                "cusip":               cusip,
+                "note_type":           result.get("note_type"),
+                "risk_tier":           result.get("risk_tier"),
+                "structure_tags":      result.get("structure_tags", []),
+                "chunks_stored":       result.get("chunks_stored", 0),
+                "db_record_id":        result.get("db_record_id"),
+                "fields_extracted":    len(result.get("extracted_fields", {})),
+                "risk_findings":       len(result.get("risk_findings", [])),
+                "baseline_deviations": result.get("baseline_deviations", []),
+                "matches_baseline":    result.get("matches_baseline", True),
+                "conflicts":           result.get("conflicts", []),
+                "low_confidence_fields": low_confidence,
+                "report_path":         result.get("report_path"),
+                "errors":              result.get("errors", []),
+            }
+            logger.info(f"[ingest] job={job_id} CUSIP={cusip} complete")
+        except Exception as exc:
+            logger.exception(f"[ingest] job={job_id} CUSIP={cusip} failed: {exc}")
+            _jobs[job_id] = {"status": "error", "cusip": cusip, "error": str(exc)}
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
-    return {
-        "cusip":               cusip,
-        "status":              "ok" if not result.get("errors") else "completed_with_errors",
-        "note_type":           result.get("note_type"),
-        "risk_tier":           result.get("risk_tier"),
-        "structure_tags":      result.get("structure_tags", []),
-        "chunks_stored":       result.get("chunks_stored", 0),
-        "db_record_id":        result.get("db_record_id"),
-        "fields_extracted":    len(result.get("extracted_fields", {})),
-        "risk_findings":       len(result.get("risk_findings", [])),
-        "baseline_deviations": result.get("baseline_deviations", []),
-        "matches_baseline":    result.get("matches_baseline", True),
-        "conflicts":           result.get("conflicts", []),
-        "low_confidence_fields": low_confidence,
-        "report_path":         result.get("report_path"),
-        "errors":              result.get("errors", []),
-    }
+    threading.Thread(target=_run, args=(job_id, cusip, tmp_path), daemon=True).start()
+    return {"job_id": job_id, "status": "processing", "cusip": cusip}
+
+
+@app.get("/api/ingest/status/{job_id}", tags=["ingest"])
+async def ingest_status(job_id: str):
+    """Poll for the result of a background ingest job."""
+    job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found.")
+    return job
 
 
 @app.post("/api/ingest/url", tags=["ingest"])
@@ -269,19 +298,42 @@ async def semantic_query(request: QueryRequest):
 
 @app.get("/api/notes/{cusip}/report", tags=["notes"])
 async def get_report(cusip: str):
-    """Return the markdown analyst report for a note, reading from disk if available."""
+    """Return the markdown analyst report for a note.
+
+    Checks disk cache first. If not found, generates on-demand from stored
+    note data and caches the result to disk for subsequent requests.
+    """
     from pathlib import Path
+    from backend.pipeline.nodes import generate_report as gen_report_node
+
     detail = crud.get_note_detail(cusip)
     if detail is None:
         raise HTTPException(status_code=404, detail=f"Note with CUSIP {cusip} not found.")
 
-    # Look for a pre-generated report on disk
     safe_cusip = "".join(c for c in cusip if c.isalnum() or c in "-_")
     report_path = Path(__file__).parent.parent / "output" / f"{safe_cusip}_report.md"
+
     if report_path.exists():
         return {"cusip": cusip, "report": report_path.read_text(encoding="utf-8")}
 
-    return {"cusip": cusip, "report": None, "message": "Report not yet generated — ingest the note to produce one."}
+    # Report file missing — generate on-demand using stored note data
+    logger.info(f"[report] No cached report for {cusip} — generating on-demand")
+    state = {
+        "cusip":               cusip,
+        "extracted_fields":    detail.get("extracted_fields", {}),
+        "structure_tags":      detail.get("structure_tags", []),
+        "tag_confidence":      {},
+        "confidence_scores":   {},
+        "conflicts":           [],
+        "risk_findings":       detail.get("risk_findings", []),
+        "baseline_deviations": detail.get("baseline_deviations", []),
+        "note_type":           detail.get("note_type", "Unknown"),
+        "risk_tier":           detail.get("risk_tier", "unknown"),
+        "errors":              [],
+    }
+    result = gen_report_node.run(state)
+    report_md = result.get("report_markdown")
+    return {"cusip": cusip, "report": report_md}
 
 
 @app.get("/api/audit/{cusip}", tags=["audit"])

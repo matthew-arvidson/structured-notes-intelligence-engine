@@ -12,6 +12,13 @@ const SEVERITY_COLOR: Record<string, string> = {
 const SEVERITY_BADGE: Record<string, string> = {
   high: "badge-error", medium: "badge-warning", low: "badge-success",
 };
+const SEVERITY_DOT: Record<string, string> = {
+  high: "bg-red-400", medium: "bg-yellow-400", low: "bg-green-400",
+};
+
+const humanField = (field: string) => field.replace(/([a-z])([A-Z])/g, "$1 $2");
+const deviationMessage = (expected: string, actual: string) =>
+  actual === "null" || actual == null ? "not found in document" : `expected ${expected}, found ${actual}`;
 
 const formatVal = (v: unknown): string => {
   if (v == null) return "";
@@ -41,15 +48,23 @@ function Section({ title, defaultOpen = false, children }: { title: string; defa
 }
 
 export default function SelectedCusipDetails({ note, onClose }: Props) {
-  const [reportMd, setReportMd]   = useState<string | null>(null);
+  const [reportMd, setReportMd]       = useState<string | null>(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const loadReport = async () => {
     setReportLoading(true);
+    setReportError(null);
     try {
       const r = await fetch(`${API}/api/notes/${note.cusip}/report`);
       const d = await r.json();
-      setReportMd(d.report ?? null);
+      if (d.report) {
+        setReportMd(d.report);
+      } else {
+        setReportError(d.message ?? "Report could not be generated for this note.");
+      }
+    } catch {
+      setReportError("Failed to reach the API — ensure the backend is running.");
     } finally {
       setReportLoading(false);
     }
@@ -130,16 +145,12 @@ export default function SelectedCusipDetails({ note, onClose }: Props) {
 
         {/* Baseline Deviations */}
         {note.baseline_deviations?.length > 0 && (
-          <Section title={`Baseline Deviations (${note.baseline_deviations.length})`}>
+          <Section title={`Review Items (${note.baseline_deviations.length})`}>
             <div className="space-y-1">
               {note.baseline_deviations.map((d, i) => (
-                <div key={i} className="flex items-start gap-2 text-xs">
-                  <span className={`shrink-0 font-semibold uppercase ${SEVERITY_COLOR[d.severity]}`}>[{d.severity}]</span>
-                  <div>
-                    <span className="text-white font-semibold">{d.field}</span>
-                    <span className="text-gray-400"> — expected {d.expected}, got </span>
-                    <span className="text-yellow-300">{d.actual}</span>
-                  </div>
+                <div key={i} className="flex items-center gap-1.5 text-xs text-gray-300">
+                  <span className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${SEVERITY_DOT[d.severity] ?? "bg-gray-400"}`} />
+                  <span>{humanField(d.field)} — {deviationMessage(d.expected, d.actual)}</span>
                 </div>
               ))}
             </div>
@@ -168,16 +179,33 @@ export default function SelectedCusipDetails({ note, onClose }: Props) {
         {/* Analyst Report */}
         <Section title="Analyst Report">
           {!reportMd ? (
-            <button
-              className="btn btn-sm btn-outline w-full"
-              onClick={loadReport}
-              disabled={reportLoading}
-            >
-              {reportLoading ? "Loading…" : "Load Report"}
-            </button>
+            <div className="space-y-2">
+              <button
+                className="btn btn-sm btn-outline w-full"
+                onClick={loadReport}
+                disabled={reportLoading}
+              >
+                {reportLoading ? "Generating…" : "Load Report"}
+              </button>
+              {reportError && (
+                <p className="text-xs text-red-400 text-center">{reportError}</p>
+              )}
+            </div>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none overflow-auto max-h-[50vh] text-xs">
-              <ReactMarkdown>{reportMd}</ReactMarkdown>
+            <div>
+              <div className="flex justify-end mb-1">
+                <button
+                  className="btn btn-xs btn-ghost text-gray-400 hover:text-white"
+                  onClick={loadReport}
+                  disabled={reportLoading}
+                  title="Reload report"
+                >
+                  {reportLoading ? "…" : "↻ Refresh"}
+                </button>
+              </div>
+              <div className="prose prose-invert prose-sm max-w-none overflow-auto max-h-[50vh] text-xs">
+                <ReactMarkdown>{reportMd}</ReactMarkdown>
+              </div>
             </div>
           )}
         </Section>
