@@ -45,10 +45,21 @@ export type StructuredNote = {
   updated_at: string | null;
 };
 
+export type ConfidenceEntry = {
+  score: number;
+  reason: string;
+  source_section?: string;
+  source_page?: number | string;
+  source_excerpt?: string;
+};
+
 export type StructuredNoteDetail = StructuredNote & {
   extracted_fields: Record<string, unknown>;
+  confidence_scores: Record<string, ConfidenceEntry> | Record<string, ConfidenceEntry>[];
+  conflicts: Conflict[];
   risk_findings: RiskFinding[];
   baseline_deviations: BaselineDeviation[];
+  field_reviews: Record<string, "accepted" | "flagged">;
 };
 
 export type NoteListResponse = {

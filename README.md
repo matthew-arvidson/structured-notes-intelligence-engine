@@ -1,19 +1,17 @@
 # Structured Notes Intelligence Engine
 
 > RAG-powered analysis pipeline for equity structured note term sheets.  
-> Ingests a PDF → extracts 50+ fields → flags risks → scores confidence → generates an analyst report → answers plain-English questions about any note.
-
-![RAG answer: is this contract high risk?](docs/rag-answer.png)
+> Ingests a PDF → extracts 50+ fields → flags risks → scores per-field confidence with source citations → detects structural conflicts → supports analyst review workflow → generates a report → answers plain-English questions about any note.
 
 ---
 
 ## What It Does
 
 - **Ingests** PDF term sheets, chunks them with section-aware context, and stores embeddings in ChromaDB
-- **Analyses** each note through a LangGraph pipeline: triage → field extraction → risk flagging → baseline comparison → confidence scoring → conflict detection → report generation
-- **Answers questions** in plain language ("is this contract high risk?", "what is the maximum loss?") with every claim cited back to the exact source section of the relevant note
-
-Built as a ground-up rewrite combining the code quality of `llm_practice` (LangGraph, triage routing, clean tool separation) with the domain knowledge of `structured-notes-final` (UEQSN schema, Prompts_v2, AG Grid UI) — plus RAG, which neither predecessor had.
+- **Analyses** each note through a LangGraph pipeline: triage → field extraction → risk flagging → baseline comparison → confidence scoring → source attribution → conflict detection → report generation
+- **Shows its work** — every extracted field carries a confidence score (0–100), the LLM's reasoning, and a verbatim excerpt from the exact page and section of the source document
+- **Tracks analyst work** — analysts can accept or flag individual fields; review state persists to PostgreSQL and survives re-ingestion
+- **Answers questions** in plain language ("is this contract high risk?", "what is the maximum loss?") with every claim cited back to the source section
 
 ---
 
@@ -108,7 +106,13 @@ structured-notes-intelligence-engine/
 │
 ├── frontend/                 # Next.js 16 dashboard
 │   └── src/app/
-│       ├── page.tsx          # Notes index (AG Grid)
+│       ├── page.tsx          # Notes index (AG Grid) + tabbed detail panel
+│       ├── Components/
+│       │   ├── CusipDetailsPanel/
+│       │   │   └── SelectedCusipDetails.tsx  # 3-tab detail: Overview, Confidence Review, Conflicts
+│       │   ├── ImportComponents/             # Ingest panel + polling
+│       │   ├── IndexGridComponents/          # AG Grid notes list
+│       │   └── HeaderSubComponents/          # Filter bar
 │       └── query/page.tsx    # RAG semantic search
 │
 └── infra/                    # Azure Bicep IaC
@@ -130,10 +134,89 @@ PDF
   ↓ extract  (52 UEQSN fields for HIGH, core fields for MEDIUM, meta-only for LOW)
   ↓ flag_risks  (rule-based: worst-of, barrier, autocall, leverage terms)
   ↓ compare_baseline  (barrier ≥ 60%, required fields, CouponMemory, CallSettlementLag)
-  ↓ confidence  (per-field 0-100 scores + structural conflict detection)
+  ↓ confidence  (per-field score 0–100 + LLM reasoning)
+  ↓ source attribution  (embedding query per field → ChromaDB → page, section, verbatim excerpt)
+  ↓ conflict detection  (cross-field structural inconsistencies with severity + recommendation)
   ↓ persist → Azure PostgreSQL
   ↓ generate_report → output/{cusip}_report.md
 ```
+
+---
+
+## Confidence Review & Analyst Workflow
+
+The Confidence Review system is one of the core differentiators of this tool. Rather than presenting raw extracted fields as authoritative, it exposes the full reasoning chain so analysts can verify, accept, or flag each field.
+
+### Per-field confidence entries
+
+Every scored field stores four properties:
+
+| Property | Description |
+|---|---|
+| `score` | 0–100 integer — how confident the LLM is in the extraction |
+| `reason` | LLM's natural-language explanation of that score |
+| `source_section` | Section of the contract where evidence was found (e.g. "coupon") |
+| `source_page` | Page number in the source PDF |
+| `source_excerpt` | Verbatim text extracted from that page/section via ChromaDB |
+
+The excerpt is the raw text from `pdfplumber` — it can be Ctrl+F'd in the original PDF to locate the exact passage.
+
+### Three confidence tiers
+
+| Tier | Score range | Meaning |
+|---|---|---|
+| Needs Verification | < 70% | Analyst should manually confirm against source document |
+| Monitor | 70–89% | LLM is reasonably confident but flagged uncertainty in reasoning |
+| High Confidence | ≥ 90% | Extraction is well-supported by clear contract language |
+
+### Analyst review workflow
+
+Analysts can mark each field directly in the Confidence Review tab:
+
+- **✓ Accept** — confirms the extraction is correct; persisted to `field_reviews` table in PostgreSQL
+- **⚑ Flag** — marks the field for further attention or correction
+- Review state survives re-ingestion and page refreshes
+- The tab bar shows a live `X / Y reviewed` counter so analysts can track progress without scrolling
+
+### Conflict detection
+
+Structural conflicts are cross-field inconsistencies detected by the pipeline — areas where two or more extracted fields are logically contradictory or ambiguous. Each conflict includes:
+
+- Severity (high / medium / low)
+- The fields involved (clickable — navigate directly to those fields in Confidence Review)
+- A recommendation from the analysis
+- Source citations cross-referenced from the involved fields' confidence entries
+
+Conflicts live in their own dedicated tab to keep them clearly separated from per-field confidence review.
+
+---
+
+## Database Schema
+
+| Table | Purpose |
+|---|---|
+| `structured_notes` | Core note identity, typed fields, extracted JSON, confidence scores JSON |
+| `note_risk_findings` | Per-note risk term matches (barrier, worst-of, autocall, etc.) |
+| `note_baseline_deviations` | Deviations from firm baseline rules |
+| `note_conflicts` | Cross-field structural conflicts from the confidence node |
+| `field_reviews` | Analyst accept/flag state per field, keyed by `(note_id, field)` |
+
+Schema migrations are applied automatically at startup via `crud.run_migrations()`.
+
+---
+
+## API Routes
+
+| Method | Route | Description |
+|---|---|---|
+| GET | `/api/health` | ChromaDB + PostgreSQL status |
+| POST | `/api/ingest/upload` | Upload PDF + CUSIP, starts background pipeline |
+| GET | `/api/ingest/status/{job_id}` | Poll ingest job result |
+| GET | `/api/notes` | List notes with optional filters |
+| GET | `/api/notes/{cusip}` | Full note detail (fields, scores, conflicts, reviews) |
+| PATCH | `/api/notes/{cusip}/fields/{field}/review` | Set/clear analyst review state for a field |
+| POST | `/api/query` | RAG semantic search across ingested notes |
+| GET | `/api/notes/{cusip}/report` | Markdown analyst report (cached or generated on demand) |
 
 ---
 
@@ -181,7 +264,7 @@ Then run:
 python scripts/ingest_remaining.py
 ```
 
-Already-ingested files are skipped automatically. Each PDF takes roughly 30–60 seconds through the full LangGraph pipeline.
+Already-ingested files are skipped automatically. Each PDF takes roughly 30–60 seconds through the full LangGraph pipeline (longer for HIGH-tier notes due to source attribution embedding queries per field).
 
 ---
 
@@ -195,7 +278,20 @@ Already-ingested files are skipped automatically. Each PDF takes roughly 30–60
 | 3 | Intelligence layer — flag_risks, compare_baseline, confidence | ✅ Complete |
 | 4 | Report generation + `/api/query` RAG endpoint | ✅ Complete |
 | 5 | Next.js frontend — notes grid, detail panel, query page | ✅ Complete |
+| 5.1 | Confidence Review UI — per-field scores, source citations, tabbed detail panel | ✅ Complete |
+| 5.2 | Analyst workflow — accept/flag per field, PostgreSQL persistence, review progress | ✅ Complete |
+| 5.3 | Conflicts tab — dedicated view with source cross-reference and field navigation | ✅ Complete |
 | 6 | Hardening — tests, retry logic, Docker Compose, Key Vault prod | 🔲 Pending |
+
+### Roadmap (post-demo)
+
+| Item | Description |
+|---|---|
+| Conflict resolution workflow | Same accept/flag pattern as fields, keyed by issue hash for re-ingest stability |
+| Multi-user identity | Track which analyst accepted/flagged each field |
+| Adaptive schema | Type-specific field extraction based on triage note_type |
+| Adversarial review step | Second LLM re-extracts high-stakes fields; disagreements lower confidence |
+| Booking system integration | Phase 4 — reconciliation against live positions |
 
 ---
 

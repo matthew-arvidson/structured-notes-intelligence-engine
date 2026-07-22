@@ -48,13 +48,20 @@ export default function HomePage() {
 
   useEffect(() => { fetchNotes(); }, [fetchNotes]);
 
+  const fetchCusipDetail = useCallback(async (cusip: string) => {
+    try {
+      const r = await fetch(`${API}/api/notes/${cusip}`);
+      const d = await r.json();
+      setCusipDetail(d);
+    } catch (e) {
+      console.error("Failed to fetch note detail", e);
+    }
+  }, []);
+
   useEffect(() => {
     if (!selectedCusip) { setCusipDetail(null); return; }
-    fetch(`${API}/api/notes/${selectedCusip}`)
-      .then((r) => r.json())
-      .then(setCusipDetail)
-      .catch(console.error);
-  }, [selectedCusip]);
+    fetchCusipDetail(selectedCusip);
+  }, [selectedCusip, fetchCusipDetail]);
 
   // Client-side CUSIP search filter
   const filtered = search
@@ -101,7 +108,10 @@ export default function HomePage() {
               <ImportPanel
                 key={importKey}
                 onClose={() => setIsImportOpen(false)}
-                onIngestComplete={fetchNotes}
+                onIngestComplete={(cusip?: string) => {
+                  fetchNotes();
+                  if (cusip && selectedCusip === cusip) fetchCusipDetail(cusip);
+                }}
                 onOpenNote={(cusip) => { setIsImportOpen(false); setSelectedCusip(cusip); }}
               />
             ) : cusipDetail ? (

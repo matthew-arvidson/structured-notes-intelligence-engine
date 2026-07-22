@@ -1,17 +1,19 @@
 """
-Confidence node: per-field confidence scoring + conflict detection.
+Confidence node: per-field confidence scoring + conflict detection + source attribution.
 
-Implements Prompts_v2 steps 3 (CONFIDENCE_PROMPT) and 4 (CONFLICTS_PROMPT).
-Two sequential LLM calls — both are non-fatal if they fail.
+Implements Prompts_v2 steps 3 (CONFIDENCE_PROMPT) and 4 (CONFLICTS_PROMPT),
+plus an in-pipeline RAG step (Step 3b) that fetches the most relevant contract
+excerpt for every low-confidence field so analysts can audit against the source.
 
-Input state keys:  extracted_fields, structure_tags, tag_confidence
+Input state keys:  extracted_fields, structure_tags, tag_confidence, cusip
 Output state keys: confidence_scores, conflicts
 """
 
 import json
 import logging
 from backend.pipeline.state import NoteAnalysisState
-from backend.tools.llm_client import get_chat_llm
+from backend.tools.llm_client import get_chat_llm, get_embeddings
+from backend.tools.chroma_client import get_collection
 from backend.domain.prompts import CONFIDENCE_PROMPT, CONFLICTS_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -65,7 +67,21 @@ def run(state: NoteAnalysisState) -> dict:
         raw = _call_llm(prompt)
         confidence_scores = json.loads(raw)
 
-        low_confidence = [f for f, s in confidence_scores.items() if isinstance(s, int) and s < 90]
+        # LLM occasionally wraps the object in an array — unwrap if so
+        if isinstance(confidence_scores, list):
+            confidence_scores = confidence_scores[0] if confidence_scores and isinstance(confidence_scores[0], dict) else {}
+
+        # Normalise: accept both legacy {field: int} and new {field: {score, reason}}
+        # Convert legacy flat-int format to the enriched format so storage is always consistent
+        normalised: dict[str, dict] = {}
+        for field, val in confidence_scores.items():
+            if isinstance(val, dict) and "score" in val:
+                normalised[field] = {"score": int(val["score"]), "reason": val.get("reason", "")}
+            elif isinstance(val, (int, float)):
+                normalised[field] = {"score": int(val), "reason": ""}
+        confidence_scores = normalised
+
+        low_confidence = [f for f, v in confidence_scores.items() if v.get("score", 100) < 90]
         if low_confidence:
             logger.warning(f"[confidence] Low-confidence fields (<90): {low_confidence}")
 
@@ -79,6 +95,40 @@ def run(state: NoteAnalysisState) -> dict:
         msg = f"confidence: CONFIDENCE_PROMPT failed — {exc}"
         logger.exception(msg)
         errors.append(msg)
+
+    # ── Step 3b: Source Attribution via RAG ───────────────────────────────────
+    # For every scored field, run a targeted embedding query against the CUSIP's
+    # own chunks and attach the best-matching excerpt + metadata so analysts can
+    # trace any extracted value back to the exact contract language.
+    cusip = state.get("cusip", "")
+    if cusip and confidence_scores:
+        try:
+            embed_fn = get_embeddings()
+            collection = get_collection()
+
+            for field, entry in confidence_scores.items():
+                extracted_val = str(fields.get(field, ""))[:200]
+                query = f"{field}: {extracted_val}" if extracted_val else field
+
+                vector = embed_fn.embed_query(query)
+                results = collection.query(
+                    query_embeddings=[vector],
+                    n_results=1,
+                    where={"cusip": cusip},
+                    include=["documents", "metadatas"],
+                )
+
+                docs = results.get("documents", [[]])[0]
+                metas = results.get("metadatas", [[]])[0]
+
+                if docs and metas:
+                    entry["source_section"] = metas[0].get("section", "")
+                    entry["source_page"] = metas[0].get("page", "")
+                    entry["source_excerpt"] = docs[0]
+
+            logger.info(f"[confidence] Source attribution complete for CUSIP={cusip}")
+        except Exception as exc:
+            logger.warning(f"[confidence] Source attribution failed (non-fatal): {exc}")
 
     # ── Step 4: Conflict Detection ────────────────────────────────────────────
     conflicts: list[dict] = []

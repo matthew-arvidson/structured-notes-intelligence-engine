@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
     logger.info("Structured Notes Intelligence Engine starting up...")
     try:
         crud.create_tables()
+        crud.run_migrations()
         logger.info("Database tables ready.")
     except Exception as exc:
         logger.error(f"Startup DB table creation failed: {exc}")
@@ -109,8 +110,8 @@ async def ingest_upload(
             })
             confidence_scores = result.get("confidence_scores", {})
             low_confidence = [
-                f for f, s in confidence_scores.items()
-                if isinstance(s, (int, float)) and s < 90
+                f for f, v in confidence_scores.items()
+                if isinstance(v, dict) and v.get("score", 100) < 90
             ]
             _jobs[job_id] = {
                 "status":              "ok" if not result.get("errors") else "completed_with_errors",
@@ -191,6 +192,25 @@ async def get_note(cusip: str):
     return detail
 
 
+class FieldReviewRequest(BaseModel):
+    state: str | None  # 'accepted' | 'flagged' | None to clear
+
+
+@app.patch("/api/notes/{cusip}/fields/{field}/review", tags=["notes"])
+async def review_field(cusip: str, field: str, body: FieldReviewRequest):
+    """Set or clear the analyst review state for a single extracted field.
+
+    Send state='accepted' to confirm the extraction, 'flagged' to mark for
+    follow-up, or null to reset to unreviewed.
+    """
+    if body.state not in (None, "accepted", "flagged"):
+        raise HTTPException(status_code=400, detail="state must be 'accepted', 'flagged', or null")
+    ok = crud.upsert_field_review(cusip, field, body.state)
+    if not ok:
+        raise HTTPException(status_code=404, detail=f"Note with CUSIP {cusip} not found.")
+    return {"cusip": cusip, "field": field, "state": body.state}
+
+
 # ─── Semantic search + audit (Phase 4) ────────────────────────────────────────
 
 class QueryRequest(BaseModel):
@@ -269,7 +289,7 @@ async def semantic_query(request: QueryRequest):
             "section":   section,
             "page":      page,
             "relevance": round(1 - float(dist), 3),
-            "excerpt":   doc[:200],
+            "excerpt":   doc,
         })
 
     context = "\n\n---\n\n".join(context_parts)

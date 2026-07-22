@@ -44,3 +44,6 @@ frontend/.env.local
 # Output artifacts
 output/
 *.log
+
+# Cloudflare tunnel (machine-specific, may contain credentials)
+.cloudflared/

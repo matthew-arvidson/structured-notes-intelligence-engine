@@ -128,7 +128,7 @@ def flag_risk_terms(text: str, section: str = "") -> list[RiskFinding]:
     return findings
 
 
-def _extract_excerpt(text: str, term: str, window: int = 120) -> str:
+def _extract_excerpt(text: str, term: str, window: int = 400) -> str:
     """Return up to `window` characters surrounding the first match of `term`."""
     idx = text.find(term)
     if idx == -1:

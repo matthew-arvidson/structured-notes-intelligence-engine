@@ -25,6 +25,7 @@ export default function QueryPage() {
   const [result,    setResult]    = useState<QueryResponse | null>(null);
   const [error,     setError]     = useState<string | null>(null);
   const [notes,     setNotes]     = useState<StructuredNote[]>([]);
+  const [sourcesOpen, setSourcesOpen] = useState(true);
 
   // Populate the CUSIP dropdown from the notes index
   useEffect(() => {
@@ -55,6 +56,7 @@ export default function QueryPage() {
 
       if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
       setResult(await r.json());
+      setSourcesOpen(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Query failed");
     } finally {
@@ -140,29 +142,35 @@ export default function QueryPage() {
               </div>
             </div>
 
-            {/* Source citations */}
-            <div className="bg-[#1c1d1e] rounded p-4">
-              <p className="text-xs text-gray-500 mb-2 font-semibold uppercase tracking-wider">
-                Sources ({result.sources.length})
-              </p>
-              <div className="space-y-2">
-                {result.sources.map((s) => (
-                  <div key={s.rank} className="flex gap-3 text-xs border-b border-gray-800 pb-2">
-                    <span className="text-gray-500 shrink-0 w-5">[{s.rank}]</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex gap-3 flex-wrap mb-1">
-                        <span className="font-mono text-white">{s.cusip}</span>
-                        {s.section && <span className="text-gray-400">§ {s.section}</span>}
-                        {s.page && <span className="text-gray-500">p.{s.page}</span>}
-                        <span className={`ml-auto font-semibold ${RELEVANCE_COLOR(s.relevance)}`}>
-                          {Math.round(s.relevance * 100)}% match
-                        </span>
+            {/* Source citations — collapsible, expanded by default */}
+            <div className="bg-[#1c1d1e] rounded">
+              <button
+                onClick={() => setSourcesOpen(o => !o)}
+                className="w-full flex items-center justify-between px-4 py-3 text-xs font-semibold uppercase tracking-wider text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                <span>Sources ({result.sources.length})</span>
+                <span className="text-gray-600 text-base leading-none">{sourcesOpen ? "▲" : "▼"}</span>
+              </button>
+              {sourcesOpen && (
+                <div className="px-4 pb-4 space-y-3 border-t border-gray-800">
+                  {result.sources.map((s) => (
+                    <div key={s.rank} className="flex gap-3 text-xs border-b border-gray-800 pb-3 last:border-0 last:pb-0">
+                      <span className="text-gray-500 shrink-0 w-5">[{s.rank}]</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex gap-3 flex-wrap mb-1.5">
+                          <span className="font-mono text-white">{s.cusip}</span>
+                          {s.section && <span className="text-gray-400">§ {s.section}</span>}
+                          {s.page && <span className="text-gray-500">p.{s.page}</span>}
+                          <span className={`ml-auto font-semibold ${RELEVANCE_COLOR(s.relevance)}`}>
+                            {Math.round(s.relevance * 100)}% match
+                          </span>
+                        </div>
+                        <p className="text-gray-400 whitespace-pre-wrap break-words leading-relaxed">{s.excerpt}</p>
                       </div>
-                      <p className="text-gray-500 truncate">{s.excerpt}</p>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <button

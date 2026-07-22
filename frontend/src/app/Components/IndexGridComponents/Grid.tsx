@@ -13,6 +13,12 @@ const TIER_COLORS: Record<string, string> = {
   low:    "text-green-400",
 };
 
+const TIER_TOOLTIPS: Record<string, string> = {
+  high:   "HIGH — complex structure (e.g. barrier, worst-of, autocall). Full 52-field extraction run. Warrants closest analyst review.",
+  medium: "MEDIUM — moderate complexity. Core fields extracted. Secondary review recommended.",
+  low:    "LOW — simple or standard structure. Metadata-level extraction only.",
+};
+
 const BLANK_TITLE = "Not present in this document — may not apply to this note type";
 
 function BlankCell({ value }: { value: string }) {
@@ -51,9 +57,13 @@ export default function Grid({ notes, onCusipClick }: GridProps) {
     {
       field: "risk_tier",
       headerName: "Tier",
+      headerTooltip: "Risk tier assigned by the triage stage — drives extraction depth and analyst review priority.",
       flex: 0.8,
       cellRenderer: (params: { value: string }) => (
-        <span className={`font-semibold uppercase text-xs ${TIER_COLORS[params.value] ?? ""}`}>
+        <span
+          className={`font-semibold uppercase text-xs cursor-help ${TIER_COLORS[params.value] ?? ""}`}
+          title={TIER_TOOLTIPS[params.value] ?? params.value}
+        >
           {params.value}
         </span>
       ),

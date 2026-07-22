@@ -116,20 +116,23 @@ Extracted features:
 
 # ─── Prompt 3: Confidence Quantification ──────────────────────────────────────
 
-CONFIDENCE_PROMPT = """Review the structured note features below. For each key field, assign a confidence score from 0 to 100 based on:
+CONFIDENCE_PROMPT = """Review the structured note features below. For each key field, assign a confidence score and a brief reason explaining that score.
+
+Score from 0 to 100 based on:
 - Clarity of the source text
 - Likelihood the extracted value is correct
 - Alignment with the identified structure type
 
-Return ONLY a valid JSON object mapping field names to integer scores:
+Return ONLY a valid JSON object mapping each field name to an object with "score" (integer) and "reason" (one concise sentence):
 {{
-  "CouponRate": 95,
-  "BarrierLevel": 88,
-  "CallSchedule": 92,
-  "FinalRedemptionLogic": 78
+  "CouponRate": {{"score": 95, "reason": "Explicitly stated as 10.00% per annum in the Coupon section."}},
+  "BarrierLevel": {{"score": 72, "reason": "Percentage stated but it is unclear whether this is observed continuously or at maturity only."}},
+  "CallSchedule": {{"score": 88, "reason": "Dates listed but payment lag not confirmed in the schedule table."}},
+  "FinalRedemptionLogic": {{"score": 61, "reason": "Redemption description is ambiguous — two interpretations are possible based on barrier breach wording."}}
 }}
 
 Include only fields that were actually extracted (non-null values).
+Keep reasons concise and analyst-facing — one sentence maximum.
 
 Extracted features:
 {extracted_features_json}

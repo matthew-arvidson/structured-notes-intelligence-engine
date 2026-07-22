@@ -41,6 +41,8 @@ def run(state: NoteAnalysisState) -> dict:
             source_file         = state.get("source_file", ""),
             source_url          = state.get("source_url", ""),
             chunks_stored       = state.get("chunks_stored", 0),
+            confidence_scores   = state.get("confidence_scores", {}),
+            conflicts           = state.get("conflicts", []),
         )
         logger.info(f"[persist] Saved CUSIP={cusip} → db_record_id={record_id}")
         return {"db_record_id": record_id, "errors": errors}

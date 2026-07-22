@@ -15,7 +15,7 @@ import json
 from datetime import datetime
 from sqlalchemy import (
     Column, Integer, String, Float, Text, Boolean,
-    DateTime, ForeignKey, Index,
+    DateTime, ForeignKey, Index, UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
@@ -50,7 +50,8 @@ class StructuredNote(Base):
     has_memory_coupon = Column(Boolean, default=False)
 
     # Full extraction payload
-    extracted_fields_json = Column(Text, nullable=True)  # full UEQSN schema JSON
+    extracted_fields_json = Column(Text, nullable=True)   # full UEQSN schema JSON
+    confidence_scores_json = Column(Text, nullable=True)  # {field: 0-100} per extracted field
 
     # Source
     source_file = Column(String(500), nullable=True)
@@ -64,6 +65,8 @@ class StructuredNote(Base):
     # Relationships
     risk_findings = relationship("NoteRiskFinding", back_populates="note", cascade="all, delete-orphan")
     baseline_deviations = relationship("NoteBaselineDeviation", back_populates="note", cascade="all, delete-orphan")
+    conflicts = relationship("NoteConflict", back_populates="note", cascade="all, delete-orphan")
+    field_reviews = relationship("FieldReview", back_populates="note", cascade="all, delete-orphan")
 
     def get_structure_tags(self) -> list[str]:
         if not self.structure_tags:
@@ -104,3 +107,41 @@ class NoteBaselineDeviation(Base):
     note = relationship("StructuredNote", back_populates="baseline_deviations")
 
     __table_args__ = (Index("ix_baseline_deviations_note_id", "note_id"),)
+
+
+class NoteConflict(Base):
+    __tablename__ = "note_conflicts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    note_id = Column(Integer, ForeignKey("structured_notes.id"), nullable=False)
+    issue = Column(Text, nullable=False)
+    fields_involved = Column(Text, nullable=True)   # JSON array of field name strings
+    severity = Column(String(10), nullable=False)
+    recommendation = Column(Text, nullable=True)
+
+    note = relationship("StructuredNote", back_populates="conflicts")
+
+    __table_args__ = (Index("ix_conflicts_note_id", "note_id"),)
+
+
+class FieldReview(Base):
+    """Analyst workflow state per extracted field per note.
+
+    state: 'accepted' — analyst confirmed the extraction is correct
+           'flagged'  — analyst flagged for further review / correction
+    Absence of a row means the field is unreviewed (default).
+    """
+    __tablename__ = "field_reviews"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    note_id = Column(Integer, ForeignKey("structured_notes.id"), nullable=False)
+    field = Column(String(100), nullable=False)
+    state = Column(String(20), nullable=False)   # 'accepted' | 'flagged'
+    reviewed_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    note = relationship("StructuredNote", back_populates="field_reviews")
+
+    __table_args__ = (
+        Index("ix_field_reviews_note_id", "note_id"),
+        UniqueConstraint("note_id", "field", name="uq_field_reviews_note_field"),
+    )

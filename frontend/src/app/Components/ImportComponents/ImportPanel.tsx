@@ -7,7 +7,7 @@ const API = "";
 
 interface ImportPanelProps {
   onClose: () => void;
-  onIngestComplete?: () => void;
+  onIngestComplete?: (cusip?: string) => void;
   onOpenNote?: (cusip: string) => void;
 }
 
@@ -46,7 +46,7 @@ export default function ImportPanel({ onClose, onIngestComplete, onOpenNote }: I
       // Poll until done
       const data = await poll(job_id);
       setResult(data);
-      onIngestComplete?.();
+      onIngestComplete?.(cusip.trim().toUpperCase());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
     } finally {
